@@ -1,0 +1,6 @@
+{
+  "name": "BioCode Studio",
+  "description": "Professional bioinformatics studio featuring Biological Data Explorer, multi-database query adapters (NCBI, BLAST, UniProt, RCSB PDB), FASTA ingestion, physics-informed 3D macromolecular structure resolution, Ramachandran validation, backbone superposition RMSD, and comparative Original vs Modified sequence impact evaluation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
