@@ -1,10 +1,11 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   SequenceIntelligenceResult,
   SequenceType,
   VisualizationMode,
   EngineType,
-  AnalysisPipelineType
+  AnalysisPipelineType,
+  SequenceValidationDetails
 } from './types';
 import { routeSequenceAutomation } from './automationRouter';
 import { SequenceSourceMetadata } from '../../services/adapters/types';
@@ -19,6 +20,7 @@ export interface UseSequenceIntelligenceReturn {
   availableAnalyses: AnalysisPipelineType[];
   isValid: boolean;
   validationErrors: string[];
+  validationDetails?: SequenceValidationDetails;
   confidence: number;
   length: number;
   fastaHeader: string | null;
@@ -35,13 +37,23 @@ export interface UseSequenceIntelligenceReturn {
 
 export function useSequenceIntelligence(
   initialInput: string = '',
-  sourceMetadata?: SequenceSourceMetadata | null
+  sourceMetadata?: SequenceSourceMetadata | null,
+  canonicalType?: SequenceType
 ): UseSequenceIntelligenceReturn {
   const [rawInput, setRawInput] = useState<string>(initialInput);
 
+  // Synchronize internal rawInput whenever a new sequence is loaded into the workbench
+  useEffect(() => {
+    setRawInput(initialInput);
+  }, [initialInput]);
+
+  const updateSequence = useCallback((input: string) => {
+    setRawInput(input);
+  }, []);
+
   const result: SequenceIntelligenceResult = useMemo(() => {
-    return routeSequenceAutomation(rawInput, sourceMetadata);
-  }, [rawInput, sourceMetadata]);
+    return routeSequenceAutomation(rawInput, sourceMetadata, canonicalType);
+  }, [rawInput, sourceMetadata, canonicalType]);
 
   return {
     rawInput,
@@ -53,11 +65,12 @@ export function useSequenceIntelligence(
     availableAnalyses: result.availableAnalyses,
     isValid: result.isValid,
     validationErrors: result.validationErrors,
+    validationDetails: result.validationDetails,
     confidence: result.confidence,
     length: result.length,
     fastaHeader: result.fastaHeader,
     cleanedSequence: result.cleanedSequence,
-    updateSequence: setRawInput,
+    updateSequence,
     metadata: result.metadata,
     biologicalClassification: result.biologicalClassification
   };

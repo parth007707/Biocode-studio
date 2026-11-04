@@ -202,9 +202,7 @@ export async function processFullBiologicalRecord(
           if (retryErr.name === 'AbortError' || signal?.aborted) {
             throw retryErr;
           }
-          console.error(`[chunkedSequenceProcessor] Chunk ${c + 1} (${start}..${stop}) retry failed, substituting placeholder Ns:`, retryErr);
-          const expectedLen = Math.max(1, stop - start + 1);
-          chunkSeq = 'N'.repeat(expectedLen);
+          throw new Error(`Failed to retrieve sequence chunk ${c + 1} of ${totalChunks} (${start.toLocaleString()}..${stop.toLocaleString()} bp) for ${accession}: ${retryErr?.message || 'Network failure'}`);
         }
       }
 

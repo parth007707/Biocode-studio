@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { parseFasta } from '../../../lib/bio';
+import { parseFasta, validateBiologicalSequence } from '../../../lib/bio';
 import { 
   FileUp, 
   CheckCircle2, 
@@ -7,8 +7,10 @@ import {
   Dna, 
   ArrowRight, 
   FileCode, 
-  Sparkles,
-  Trash2
+  Sparkles, 
+  Trash2,
+  ShieldAlert,
+  Wand2
 } from 'lucide-react';
 
 interface FastaImportViewProps {
@@ -24,6 +26,7 @@ export const FastaImportView: React.FC<FastaImportViewProps> = ({ onAnalyzeInWor
     parsedHeader: string | null;
     parsedSequence: string;
     sequenceLength: number;
+    validation?: any;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -50,13 +53,15 @@ export const FastaImportView: React.FC<FastaImportViewProps> = ({ onAnalyzeInWor
         }
 
         const parsed = parseFasta(content);
+        const validation = validateBiologicalSequence(content);
         setFileData({
           fileName: file.name,
           fileSize: file.size,
           rawText: content,
           parsedHeader: parsed.header,
           parsedSequence: parsed.sequence,
-          sequenceLength: parsed.sequence.length
+          sequenceLength: parsed.sequence.length,
+          validation
         });
       } catch (err: any) {
         setError(`Failed to parse FASTA file: ${err.message}`);
@@ -214,8 +219,38 @@ export const FastaImportView: React.FC<FastaImportViewProps> = ({ onAnalyzeInWor
             </div>
           </div>
 
+          {/* Validation Feedback Banner */}
+          {fileData.validation && !fileData.validation.isValid && (
+            <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-lg flex items-center justify-between gap-3 text-xs text-rose-300 font-mono">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>
+                  Flagged <strong>{fileData.validation.totalInvalidCount}</strong> non-biological / invalid character(s) in this file ({fileData.validation.invalidFindings.map((f: any) => `'${f.char}'`).join(', ')}).
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const clean = fileData.validation.sanitizedCleanSequence;
+                  const newFasta = fileData.parsedHeader ? `>${fileData.parsedHeader}\n${clean}` : clean;
+                  onAnalyzeInWorkbench(newFasta);
+                }}
+                className="px-3 py-1 bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 border border-rose-500/40 rounded-md font-bold transition-colors cursor-pointer shrink-0"
+              >
+                Auto-Sanitize &amp; Analyze
+              </button>
+            </div>
+          )}
+
+          {fileData.validation && fileData.validation.isValid && (
+            <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg flex items-center gap-2 text-xs text-emerald-400 font-mono">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>Valid {fileData.validation.targetType} sequence verified. Zero non-biological residues detected.</span>
+            </div>
+          )}
+
           {/* Action Button */}
-          <div className="pt-2 flex justify-end">
+          <div className="pt-2 flex justify-end gap-3">
             <button
               type="button"
               onClick={() => onAnalyzeInWorkbench(fileData.rawText)}

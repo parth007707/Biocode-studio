@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   ResolvedStructure3D,
   StructureSuperpositionResult,
@@ -42,13 +42,15 @@ interface StructureStudioModalProps {
   originalSequence?: string;
 }
 
+const EMPTY_MUTATIONS: SequenceMutation[] = [];
+
 export const StructureStudioModal: React.FC<StructureStudioModalProps> = ({
   isOpen,
   onClose,
   sequence,
   sequenceType,
   accessionOrPdbId,
-  mutations = [],
+  mutations = EMPTY_MUTATIONS,
   originalSequence
 }) => {
   const [activeTab, setActiveTab] = useState<'viewport' | 'ramachandran' | 'superposition' | 'pdb_text'>('viewport');
@@ -60,6 +62,13 @@ export const StructureStudioModal: React.FC<StructureStudioModalProps> = ({
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [selectedResSeq, setSelectedResSeq] = useState<number | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
+
+  const mutationsKey = useMemo(() => {
+    if (!mutations || mutations.length === 0) return '';
+    return mutations
+      .map(m => `${m.position}:${m.original}>${m.modified}:${m.operation}`)
+      .join(';');
+  }, [mutations]);
 
   // Load 3D Structure on Mount / Prop Changes
   useEffect(() => {
@@ -106,7 +115,8 @@ export const StructureStudioModal: React.FC<StructureStudioModalProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, sequence, sequenceType, accessionOrPdbId, mutations, originalSequence]);
+  }, [isOpen, sequence, sequenceType, accessionOrPdbId, mutationsKey, originalSequence]);
+
 
   if (!isOpen) return null;
 

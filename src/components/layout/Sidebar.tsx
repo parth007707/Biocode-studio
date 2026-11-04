@@ -8,8 +8,7 @@ import {
   History, 
   Settings, 
   Cpu, 
-  ShieldCheck,
-  ChevronRight
+  ChevronRight,
 } from 'lucide-react';
 import { NavItem } from '../../types';
 
@@ -29,58 +28,65 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
   ];
 
   return (
-    <aside className="w-[260px] bg-[#F0F9FF] border-r border-[#BAE6FD] flex flex-col h-screen select-none shrink-0 z-20 overflow-hidden shadow-[0_4px_20px_rgba(14,165,233,0.06)]">
+    <aside className="w-[260px] bg-white border-r border-slate-200/90 flex flex-col h-screen select-none shrink-0 z-20 overflow-hidden shadow-xs">
       {/* Brand Logo */}
-      <div className="p-5 flex items-center space-x-3 border-b border-[#BAE6FD] bg-white/70 backdrop-blur-xs">
-        <div className="w-8 h-8 bg-[#E0F2FE] border border-[#7DD3FC] rounded-lg flex items-center justify-center text-[#0284C7] shadow-[0_0_15px_rgba(14,165,233,0.2)] shrink-0">
-          <Dna className="w-5 h-5 text-[#0284C7]" />
+      <div className="p-5 flex items-center space-x-3 border-b border-slate-100 bg-white">
+        <div className="w-9 h-9 bg-sky-50 border border-sky-200 rounded-xl flex items-center justify-center text-sky-600 relative shrink-0 group shadow-xs">
+          <Dna className="w-5 h-5 text-sky-600 transition-transform duration-500 group-hover:rotate-45" />
+          <span className="w-2 h-2 rounded-full bg-emerald-500 absolute -top-0.5 -right-0.5 border-2 border-white shadow-xs" />
         </div>
-        <span className="text-lg font-bold tracking-tight text-[#0F172A] truncate">
-          BioCode <span className="text-[#0284C7]">Studio</span>
-        </span>
+        <div className="min-w-0">
+          <span className="text-base font-[700] tracking-tight text-slate-900 truncate font-display block">
+            BioCode <span className="text-sky-600">Studio</span>
+          </span>
+          <span className="text-[10px] font-sans font-medium text-slate-500 uppercase block tracking-wider">
+            Research Platform
+          </span>
+        </div>
       </div>
 
-      {/* Navigation */}
-      <div className="flex-1 px-3.5 py-4 space-y-1.5 overflow-y-auto">
+      {/* Navigation Links */}
+      <div className="flex-1 px-3 py-4 space-y-1.5 overflow-y-auto font-sans">
         {navigationItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
 
-          // Color coded active identity for each section
+          // Color coded active identity for each section in clean light aesthetic
           const getActiveClasses = () => {
             switch (item.id) {
               case 'ai-assistant':
-                return 'bg-[#FDF2F8] text-[#BE185D] font-semibold border-l-4 border-l-[#EC4899] border-y border-r border-[#F9A8D4] shadow-xs';
+                return 'bg-pink-50 text-pink-700 font-[600] border-l-[3px] border-l-pink-500 border-y border-r border-pink-200/70 shadow-xs';
               case 'projects':
-                return 'bg-[#F5F3FF] text-[#6D28D9] font-semibold border-l-4 border-l-[#8B5CF6] border-y border-r border-[#DDD6FE] shadow-xs';
+                return 'bg-purple-50 text-purple-700 font-[600] border-l-[3px] border-l-purple-500 border-y border-r border-purple-200/70 shadow-xs';
               case 'history':
-                return 'bg-[#FFF7ED] text-[#C2410C] font-semibold border-l-4 border-l-[#F97316] border-y border-r border-[#FED7AA] shadow-xs';
+                return 'bg-amber-50 text-amber-700 font-[600] border-l-[3px] border-l-amber-500 border-y border-r border-amber-200/70 shadow-xs';
               case 'settings':
-                return 'bg-[#F1F5F9] text-[#334155] font-semibold border-l-4 border-l-[#64748B] border-y border-r border-[#CBD5E1] shadow-xs';
+                return 'bg-slate-100 text-slate-900 font-[600] border-l-[3px] border-l-slate-600 border-y border-r border-slate-200/70 shadow-xs';
               case 'dashboard':
               case 'analysis':
               default:
-                return 'bg-[#E0F2FE] text-[#0369A1] font-semibold border-l-4 border-l-[#0284C7] border-y border-r border-[#7DD3FC] shadow-xs';
+                return 'bg-sky-50 text-sky-700 font-[600] border-l-[3px] border-l-sky-500 border-y border-r border-sky-200/70 shadow-xs';
             }
           };
 
           const getIconColor = () => {
-            if (!isActive) return 'text-[#64748B] group-hover:text-[#0F172A]';
+            if (!isActive) return 'text-slate-400 group-hover:text-slate-700';
             switch (item.id) {
-              case 'ai-assistant': return 'text-[#EC4899]';
-              case 'projects': return 'text-[#8B5CF6]';
-              case 'history': return 'text-[#F97316]';
-              case 'settings': return 'text-[#475569]';
-              default: return 'text-[#0284C7]';
+              case 'ai-assistant': return 'text-pink-600';
+              case 'projects': return 'text-purple-600';
+              case 'history': return 'text-amber-600';
+              case 'settings': return 'text-slate-700';
+              default: return 'text-sky-600';
             }
           };
 
           const getChevronColor = () => {
             switch (item.id) {
-              case 'ai-assistant': return 'text-[#EC4899]';
-              case 'projects': return 'text-[#8B5CF6]';
-              case 'history': return 'text-[#F97316]';
-              default: return 'text-[#0284C7]';
+              case 'ai-assistant': return 'text-pink-600';
+              case 'projects': return 'text-purple-600';
+              case 'history': return 'text-amber-600';
+              case 'settings': return 'text-slate-500';
+              default: return 'text-sky-600';
             }
           };
 
@@ -88,10 +94,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id)}
-              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer group relative ${
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-[500] transition-all duration-150 cursor-pointer group relative ${
                 isActive
                   ? getActiveClasses()
-                  : 'text-[#475569] hover:bg-white/80 hover:text-[#0F172A] border border-transparent'
+                  : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 border border-transparent'
               }`}
             >
               <div className="flex items-center space-x-3 min-w-0">
@@ -105,39 +111,38 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
                   <span
                     className={`text-[10px] px-2 py-0.5 rounded font-mono font-semibold ${
                       item.id === 'ai-assistant'
-                        ? 'bg-[#FDF2F8] text-[#EC4899] border border-[#F9A8D4]'
+                        ? 'bg-pink-100 text-pink-700 border border-pink-200'
                         : isActive
-                        ? 'bg-[#E0F2FE] text-[#0284C7] border border-[#7DD3FC]'
-                        : 'bg-white text-[#64748B] border border-[#BAE6FD]'
+                        ? 'bg-sky-100 text-sky-700 border border-sky-200'
+                        : 'bg-slate-100 text-slate-600 border border-slate-200'
                     }`}
                   >
                     {item.badge}
                   </span>
                 )}
-                {isActive && <ChevronRight className={`w-3.5 h-3.5 ${getChevronColor()}`} />}
+                {isActive && (
+                  <div className="flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+                    <ChevronRight className={`w-3.5 h-3.5 ${getChevronColor()}`} />
+                  </div>
+                )}
               </div>
             </button>
           );
         })}
       </div>
 
-      {/* Footer System Status Card */}
-      <div className="p-3.5 border-t border-[#BAE6FD] bg-white/70 backdrop-blur-xs">
-        <div className="rounded-xl p-3 bg-white border border-[#BAE6FD] space-y-2 shadow-2xs">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-[#64748B] flex items-center gap-1.5 font-mono">
-              <Cpu className="w-3.5 h-3.5 text-[#0284C7]" />
-              Engine Status
-            </span>
-            <span className="flex items-center gap-1.5 font-mono text-[11px] text-[#16A34A] font-semibold bg-[#F0FDF4] px-1.5 py-0.5 rounded border border-[#BBF7D0]">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E] animate-pulse" />
-              Operational
-            </span>
-          </div>
-          <div className="text-[11px] text-[#64748B] flex items-center justify-between pt-1.5 border-t border-[#E2E8F0] font-mono">
-            <span>Platform:</span>
-            <span className="text-[#0284C7] font-semibold">Research Station</span>
-          </div>
+      {/* Compact Engine Status */}
+      <div className="p-3 border-t border-slate-200/80 bg-slate-50/70 font-sans">
+        <div className="flex items-center justify-between text-xs px-2 py-1.5">
+          <span className="text-slate-600 font-medium flex items-center gap-1.5">
+            <Cpu className="w-3.5 h-3.5 text-sky-600" />
+            <span>Research Engine</span>
+          </span>
+          <span className="flex items-center gap-1.5 font-semibold text-emerald-700 text-[11px] bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 shadow-2xs">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span>Operational</span>
+          </span>
         </div>
       </div>
     </aside>

@@ -1,5 +1,22 @@
 import { SequenceType } from '../types';
 
+export type StructureStatusState = 
+  | 'EXPERIMENTAL' 
+  | 'PREDICTED' 
+  | 'PARTIAL' 
+  | 'SEQUENCE_DERIVED' 
+  | 'UNAVAILABLE';
+
+export interface ResidueMappingItem {
+  seqPos: number; // 1-based sequence position
+  seqAa: string; // 1-letter amino acid code
+  status: 'modeled' | 'unavailable';
+  structureResSeq?: number;
+  structureResName?: string;
+  chainId?: string;
+  residue?: Residue3D;
+}
+
 export type StructureResolutionSource = 
   | 'RCSB_PDB' 
   | 'ALPHAFOLD_DB' 
@@ -12,7 +29,8 @@ export type RepresentationMode =
   | 'ball_and_stick' 
   | 'space_fill' 
   | 'backbone_trace' 
-  | 'surface';
+  | 'surface'
+  | 'wireframe';
 
 export type ColorScheme = 
   | 'secondary_structure' 
@@ -119,6 +137,17 @@ export interface MeasurementItem {
   color: string;
 }
 
+export interface StructureCoverageInfo {
+  startResSeq: number;
+  endResSeq: number;
+  coveredResiduesCount: number;
+  totalSequenceLength: number;
+  coveragePercent: number;
+  isPartial: boolean;
+  unresolvedRegions: string[];
+  chain: string;
+}
+
 export interface ResolvedStructure3D {
   id: string;
   title: string;
@@ -145,6 +174,24 @@ export interface ResolvedStructure3D {
   };
   ramachandranStats?: RamachandranStats;
   pLddtAvg?: number;
+  structureType?: StructureStatusState;
+  residueMapping?: ResidueMappingItem[];
+  coverageInfo?: StructureCoverageInfo;
+  sequenceId?: string;
+  sequenceVersion?: string;
+  sequenceHash?: string;
+  sequenceLength?: number;
+  predictionMethod?: string;
+  confidenceInfo?: {
+    metric: string;
+    value: number | string;
+    description: string;
+  };
+  sourceName?: string;
+  sourceId?: string;
+  resolutionText?: string;
+  isOutdated?: boolean;
+  generatedAt?: string;
   boundingBox: {
     min: [number, number, number];
     max: [number, number, number];

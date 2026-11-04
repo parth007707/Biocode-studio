@@ -88,36 +88,36 @@ export const AuthCallbackView: React.FC = () => {
   }, []);
 
   return (
-    <div className="min-h-screen bg-[#0B0F17] flex items-center justify-center p-4 text-slate-200">
-      <div className="w-full max-w-md bg-[#161B22] border border-slate-800 rounded-2xl p-8 text-center space-y-4 shadow-2xl">
-        <div className="w-12 h-12 bg-emerald-500 rounded-xl flex items-center justify-center mx-auto text-black shadow-lg shadow-emerald-500/20">
+    <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center p-4 text-[#0F172A] font-sans">
+      <div className="w-full max-w-md bg-white border border-[#CBD5E1] rounded-2xl p-8 text-center space-y-4 shadow-xl">
+        <div className="w-12 h-12 bg-sky-50 border border-sky-200 rounded-2xl flex items-center justify-center mx-auto text-[#0284C7] shadow-xs">
           <Dna className="w-6 h-6 animate-pulse" />
         </div>
-        <h2 className="text-xl font-bold text-white tracking-tight">BioCode Studio Authentication</h2>
+        <h2 className="text-xl font-bold font-display text-[#0F172A] tracking-tight">BioCode Studio Authentication</h2>
         
         {status === 'loading' && (
           <div className="space-y-3 py-4">
-            <Loader2 className="w-8 h-8 text-emerald-500 animate-spin mx-auto" />
-            <p className="text-xs text-slate-400">Verifying secure session and establishing workspace connection...</p>
+            <Loader2 className="w-8 h-8 text-[#0284C7] animate-spin mx-auto" />
+            <p className="text-xs text-[#64748B]">Verifying secure session and establishing workspace connection...</p>
           </div>
         )}
 
         {status === 'success' && (
           <div className="space-y-3 py-4">
-            <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto" />
-            <p className="text-xs text-emerald-300">Authentication successful! Redirecting to workspace...</p>
+            <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto" />
+            <p className="text-xs text-emerald-800 font-medium">Authentication successful! Redirecting to workspace...</p>
           </div>
         )}
 
         {status === 'error' && (
           <div className="space-y-4 py-2">
-            <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-400 flex items-center gap-2 text-left">
-              <AlertCircle className="w-4 h-4 shrink-0" />
+            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-center gap-2 text-left">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
               <span>{errorMessage}</span>
             </div>
             <a
-              href="/"
-              className="inline-block w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition-all text-center"
+              href="/login"
+              className="inline-block w-full py-2.5 rounded-xl bg-[#0284C7] hover:bg-[#0369a1] text-white font-semibold text-xs transition-all text-center cursor-pointer shadow-xs"
             >
               Return to Sign In
             </a>

@@ -461,10 +461,23 @@ export function parsePDBText(pdbText: string, customId?: string): ResolvedStruct
   const sz = maxZ - minZ;
   const radius = Math.sqrt(sx * sx + sy * sy + sz * sz) / 2;
 
-  // Macromolecule type determination
+  // Macromolecule type determination based on majority residue count
+  let proteinResCount = 0;
+  let dnaResCount = 0;
+  let rnaResCount = 0;
+  for (const c of chains) {
+    if (c.type === 'PROTEIN') proteinResCount += c.residues.length;
+    else if (c.type === 'DNA') dnaResCount += c.residues.length;
+    else if (c.type === 'RNA') rnaResCount += c.residues.length;
+  }
   let dominantType: SequenceType = 'PROTEIN';
-  if (chains.some((c) => c.type === 'DNA')) dominantType = 'DNA';
-  else if (chains.some((c) => c.type === 'RNA')) dominantType = 'RNA';
+  if (proteinResCount >= dnaResCount && proteinResCount >= rnaResCount && proteinResCount > 0) {
+    dominantType = 'PROTEIN';
+  } else if (dnaResCount >= rnaResCount && dnaResCount > 0) {
+    dominantType = 'DNA';
+  } else if (rnaResCount > 0) {
+    dominantType = 'RNA';
+  }
 
   const helixPercent = totalResidues > 0 ? Math.round((totalHelices / totalResidues) * 1000) / 10 : 0;
   const sheetPercent = totalResidues > 0 ? Math.round((totalSheets / totalResidues) * 1000) / 10 : 0;

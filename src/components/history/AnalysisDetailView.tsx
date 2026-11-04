@@ -28,10 +28,13 @@ import {
   Sparkles,
   Info,
   Terminal,
-  Database
+  Database,
+  FileText,
+  Loader2
 } from 'lucide-react';
 import { AnalysisRecord, SequenceRecord, formatOrganism } from '../../types';
 import { bioService } from '../../services/bioService';
+import { generateAnalysisReportPdf } from '../../services/pdfReportService';
 import {
   computeNucleotideComposition,
   analyzeGCAndORF,
@@ -72,6 +75,7 @@ export const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({
   const [copiedFull, setCopiedFull] = useState<boolean>(false);
   const [copiedJson, setCopiedJson] = useState<boolean>(false);
   const [copiedOrfProt, setCopiedOrfProt] = useState<number | null>(null);
+  const [isExportingPdf, setIsExportingPdf] = useState<boolean>(false);
 
   // ORF Filter State
   const [orfFrameFilter, setOrfFrameFilter] = useState<'all' | 'pos' | 'neg'>('all');
@@ -228,6 +232,18 @@ export const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  const handleExportPdf = async () => {
+    if (!analysis) return;
+    setIsExportingPdf(true);
+    try {
+      await generateAnalysisReportPdf(analysis, { fullSequence });
+    } catch (err) {
+      console.error('Failed to generate PDF report:', err);
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
   // Jump to page containing search match
   const handleJumpToMatch = (matchPosition: number) => {
     const targetPage = Math.floor((matchPosition - 1) / pageSize) + 1;
@@ -374,6 +390,20 @@ export const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({
               <span>Download FASTA</span>
             </button>
           )}
+
+          <button
+            onClick={handleExportPdf}
+            disabled={isExportingPdf}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-[#F1F5F9] border border-[#CBD5E1] text-xs font-mono font-semibold text-[#0284C7] hover:text-[#0369a1] transition-all cursor-pointer shadow-xs disabled:opacity-50"
+            title="Export comprehensive scientific PDF report for this analysis"
+          >
+            {isExportingPdf ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0284C7]" />
+            ) : (
+              <FileText className="w-3.5 h-3.5 text-[#0284C7]" />
+            )}
+            <span>{isExportingPdf ? 'Generating PDF...' : 'Export PDF Report'}</span>
+          </button>
         </div>
       </div>
 

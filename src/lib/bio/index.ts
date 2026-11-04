@@ -17,3 +17,5 @@ export * from './editor/mutationEngine';
 export * from './editor/changeImpactEngine';
 export * from './editor/analysisJobRunner';
 export * from './editor/normalizeAnalysisRecord';
+export * from './structure3d/structureDiagnostics';
+export * from '../../services/bio/sequenceLoader';

@@ -171,19 +171,19 @@ drop policy if exists "Users can delete project sequences" on public.project_seq
 
 create policy "Users can view project sequences"
   on public.project_sequences for select
-  using (true);
+  using (auth.uid() = user_id or user_id is null);
 
 create policy "Users can insert project sequences"
   on public.project_sequences for insert
-  with check (true);
+  with check (auth.uid() = user_id or user_id is null);
 
 create policy "Users can update project sequences"
   on public.project_sequences for update
-  using (true);
+  using (auth.uid() = user_id or user_id is null);
 
 create policy "Users can delete project sequences"
   on public.project_sequences for delete
-  using (true);
+  using (auth.uid() = user_id or user_id is null);
 
 
 -- ----------------------------------------------------------------------------

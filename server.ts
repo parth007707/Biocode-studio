@@ -3,6 +3,7 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
+import { resolveStructureForSequence, calculateSequenceHash } from "./src/server/structureService";
 
 dotenv.config();
 
@@ -12,13 +13,118 @@ const PORT = 3000;
 app.use(express.json({ limit: "10mb" }));
 
 // ----------------------------------------------------------------------------
-// Centralized AI Configuration & Resilient Provider Strategy
+// Centralized AI Configuration & Resilient Provider Strategy (Single Source of Truth)
 // ----------------------------------------------------------------------------
 export const AI_CONFIG = {
-  PRIMARY_MODEL: "gemini-3.8-flash",
-  FALLBACK_MODEL: "gemini-3.1-flash-lite",
-  REQUEST_TIMEOUT_MS: 15000, // 15s per model request to ensure responsive UI
+  PRIMARY_MODEL: process.env.GEMINI_MODEL || "gemini-3.1-flash-lite",
+  FALLBACK_MODELS: ["gemini-flash-lite-latest", "gemini-3.5-flash-lite"],
+  REQUEST_TIMEOUT_MS: 20000, // 20s per provider attempt
+  MAX_RETRIES_PER_MODEL: 1,  // at most 1 retry for primary model on transient/rate-limit
 };
+
+export type AiErrorCategory = 
+  | 'AUTH_ERROR'
+  | 'BAD_REQUEST'
+  | 'INVALID_MODEL'
+  | 'RATE_LIMIT'
+  | 'TIMEOUT'
+  | 'TEMPORARY_SERVER_FAILURE'
+  | 'UNKNOWN';
+
+export interface ClassifiedAiError {
+  category: AiErrorCategory;
+  canRetrySameModel: boolean;
+  canTryFallback: boolean;
+  httpStatus: number;
+  message: string;
+}
+
+export function classifyAiError(err: any): ClassifiedAiError {
+  const status = Number(err?.status || err?.statusCode || (typeof err?.code === 'number' ? err.code : 0)) || 0;
+  const code = String(err?.code || '').toUpperCase();
+  const rawMsg = String(err?.message || err || '').toLowerCase();
+
+  // 1. Authentication / Permission errors (401 / 403)
+  if (status === 401 || status === 403 || rawMsg.includes('api_key') || rawMsg.includes('unauthenticated') || rawMsg.includes('permission_denied') || rawMsg.includes('forbidden')) {
+    return {
+      category: 'AUTH_ERROR',
+      canRetrySameModel: false,
+      canTryFallback: false,
+      httpStatus: 401,
+      message: 'Gemini API authentication failed. Please verify your GEMINI_API_KEY in server secrets.'
+    };
+  }
+
+  // 2. Bad request / invalid arguments (400)
+  if (status === 400 && !rawMsg.includes('504') && !rawMsg.includes('timeout')) {
+    return {
+      category: 'BAD_REQUEST',
+      canRetrySameModel: false,
+      canTryFallback: false,
+      httpStatus: 400,
+      message: 'Invalid prompt or context arguments sent to BioAI.'
+    };
+  }
+
+  // 3. Invalid or discontinued model (404) - DO NOT retry same model, switch to fallback immediately
+  if (status === 404 || rawMsg.includes('not found') || rawMsg.includes('no longer available') || rawMsg.includes('unsupported model') || rawMsg.includes('not_found')) {
+    return {
+      category: 'INVALID_MODEL',
+      canRetrySameModel: false,
+      canTryFallback: true,
+      httpStatus: 404,
+      message: 'Configured AI model is discontinued or unavailable from provider.'
+    };
+  }
+
+  // 4. Rate limit / quota exhausted (429)
+  if (status === 429 || code === 'RESOURCE_EXHAUSTED' || rawMsg.includes('429') || rawMsg.includes('quota') || rawMsg.includes('resource_exhausted')) {
+    return {
+      category: 'RATE_LIMIT',
+      canRetrySameModel: true,
+      canTryFallback: true,
+      httpStatus: 429,
+      message: 'AI provider rate limit reached. Retrying request with backoff.'
+    };
+  }
+
+  // 5. Timeout (504, PROVIDER_TIMEOUT, ETIMEDOUT) - do not wait another full timeout on same model, switch to fallback
+  if (status === 504 || code === 'PROVIDER_TIMEOUT' || code === 'ETIMEDOUT' || rawMsg.includes('timed out') || rawMsg.includes('timeout')) {
+    return {
+      category: 'TIMEOUT',
+      canRetrySameModel: false,
+      canTryFallback: true,
+      httpStatus: 504,
+      message: 'AI provider request timed out. Transitioning to fallback model.'
+    };
+  }
+
+  // 6. Temporary server failure (500, 502, 503, UNAVAILABLE, high demand)
+  if (status === 502 || status === 503 || status === 500 || code === 'UNAVAILABLE' || rawMsg.includes('503') || rawMsg.includes('high demand') || rawMsg.includes('unavailable') || rawMsg.includes('econnreset')) {
+    return {
+      category: 'TEMPORARY_SERVER_FAILURE',
+      canRetrySameModel: false, // Switch immediately to next model in pipeline on high-demand spikes
+      canTryFallback: true,
+      httpStatus: 503,
+      message: 'AI provider model is experiencing high demand. Automatic failover active.'
+    };
+  }
+
+  return {
+    category: 'UNKNOWN',
+    canRetrySameModel: false,
+    canTryFallback: true,
+    httpStatus: 500,
+    message: 'BioAI generation encountered an unexpected error.'
+  };
+}
+
+// Controlled exponential backoff with jitter
+function getBackoffDelayMs(attempt: number): number {
+  const base = Math.min(1000 * Math.pow(2, attempt - 1), 4000);
+  const jitter = Math.floor(Math.random() * 250);
+  return base + jitter;
+}
 
 // Helper to construct GoogleGenAI client lazily on demand
 function getGeminiClient() {
@@ -52,16 +158,16 @@ async function generateContentWithTimeout(
   }
 
   const startTime = Date.now();
-  console.log(`[BioAI Provider][${requestId}] Calling Google GenAI SDK model=${model}`);
+  console.log(`[BioAI Provider] model=${model} status=calling requestId=${requestId}`);
 
   let timeoutId: NodeJS.Timeout | null = null;
 
   const timeoutPromise = new Promise((_, reject) => {
     timeoutId = setTimeout(() => {
       const elapsedTime = Date.now() - startTime;
-      console.warn(`[BioAI Provider][${requestId}] Request to model ${model} timed out after ${elapsedTime}ms`);
+      console.warn(`[BioAI Provider] model=${model} status=timeout elapsed=${elapsedTime}ms requestId=${requestId}`);
       const err: any = new Error(`Request to model ${model} timed out after ${AI_CONFIG.REQUEST_TIMEOUT_MS}ms`);
-      err.status = 500;
+      err.status = 504;
       err.code = "PROVIDER_TIMEOUT";
       reject(err);
     }, AI_CONFIG.REQUEST_TIMEOUT_MS);
@@ -87,75 +193,17 @@ async function generateContentWithTimeout(
     const result = await Promise.race([generatePromise, timeoutPromise]);
     if (timeoutId) clearTimeout(timeoutId);
     const elapsedTime = Date.now() - startTime;
-    console.log(`[BioAI Provider][${requestId}] Model ${model} responded successfully in ${elapsedTime}ms`);
+    console.log(`[BioAI Provider] model=${model} status=success elapsed=${elapsedTime}ms requestId=${requestId}`);
     return result as any;
   } catch (err: any) {
     if (timeoutId) clearTimeout(timeoutId);
     const elapsedTime = Date.now() - startTime;
-    console.error(`[BioAI Provider][${requestId}] Error from model ${model} after ${elapsedTime}ms:`, {
-      status: err?.status || err?.statusCode || err?.code || 500,
+    console.error(`[BioAI Provider] model=${model} status=error elapsed=${elapsedTime}ms requestId=${requestId}:`, {
       message: err?.message || String(err),
+      status: err?.status || err?.statusCode || 500
     });
     throw err;
   }
-}
-
-// Helper to check if error is transient / fallback eligible (503, 502, 504, 429, unavailable, timeout, network error)
-function isTransientOrTimeoutError(err: any): boolean {
-  const status = err?.status || err?.statusCode || err?.code;
-  const msg = (err?.message || "").toLowerCase();
-
-  if (
-    status === 503 || 
-    status === 502 || 
-    status === 504 || 
-    status === 429 || 
-    status === "PROVIDER_TIMEOUT" ||
-    status === "TIMEOUT" || 
-    status === "RESOURCE_EXHAUSTED" ||
-    status === "UNAVAILABLE"
-  ) {
-    return true;
-  }
-
-  if (
-    msg.includes("504") || 
-    msg.includes("503") || 
-    msg.includes("502") || 
-    msg.includes("429") || 
-    msg.includes("unavailable") || 
-    msg.includes("high demand") || 
-    msg.includes("quota") || 
-    msg.includes("resource_exhausted") || 
-    msg.includes("timed out") || 
-    msg.includes("econnreset") || 
-    msg.includes("etimedout")
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-// Helper to check if error is non-retryable authentication / permission error (401 / 403)
-function isAuthError(err: any): boolean {
-  const status = err?.status || err?.statusCode || err?.code;
-  const msg = (err?.message || "").toLowerCase();
-  return (
-    status === 401 || 
-    status === 403 || 
-    msg.includes("api_key") || 
-    msg.includes("unauthenticated") || 
-    msg.includes("permission_denied") || 
-    msg.includes("forbidden")
-  );
-}
-
-// Helper to check if error is invalid argument / bad request (400)
-function isBadRequestError(err: any): boolean {
-  const status = err?.status || err?.statusCode || err?.code;
-  const msg = (err?.message || "").toLowerCase();
-  return status === 400 || (msg.includes("400") && !msg.includes("504")) || msg.includes("invalid_argument");
 }
 
 // Robust generation executor with fast controlled model fallback
@@ -163,51 +211,84 @@ async function executeAiRequestWithRetryAndFallback(
   contents: any[], 
   systemInstruction: string,
   requestId: string
-) {
-  const modelsToTry = Array.from(new Set([AI_CONFIG.PRIMARY_MODEL, AI_CONFIG.FALLBACK_MODEL]));
-  let lastError: any = null;
+): Promise<{ text: string; modelUsed: string; fallbackUsed: boolean }> {
+  const modelsToTry = Array.from(new Set([AI_CONFIG.PRIMARY_MODEL, ...AI_CONFIG.FALLBACK_MODELS]));
+  let lastErrorDetail: any = null;
   let lastAttemptedModel = AI_CONFIG.PRIMARY_MODEL;
+  const executionStartTime = Date.now();
 
   for (let mIdx = 0; mIdx < modelsToTry.length; mIdx++) {
     const model = modelsToTry[mIdx];
     lastAttemptedModel = model;
+    const isFallback = mIdx > 0;
 
-    if (mIdx > 0) {
-      console.warn(`[BioAI Provider][${requestId}] Activating fallback model: ${model}`);
+    if (isFallback) {
+      console.warn(`[BioAI Fallback] from=${modelsToTry[mIdx - 1]} to=${model} requestId=${requestId}`);
     }
 
-    try {
-      const response = await generateContentWithTimeout(model, contents, systemInstruction, requestId);
-      return { 
-        response, 
-        modelUsed: model, 
-        fallbackUsed: model !== AI_CONFIG.PRIMARY_MODEL 
-      };
-    } catch (err: any) {
-      lastError = err;
+    // PRIMARY: 1 request + at most 1 retry. FALLBACK: 1 request (no repeated retries)
+    const maxAttempts = isFallback ? 1 : (1 + AI_CONFIG.MAX_RETRIES_PER_MODEL);
 
-      // Do NOT retry permanent auth errors
-      if (isAuthError(err)) {
-        throw err;
-      }
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      console.log(`[BioAI Request] requestId=${requestId} model=${model} attempt=${attempt}/${maxAttempts}`);
 
-      // Do NOT retry bad requests
-      if (isBadRequestError(err)) {
-        throw err;
-      }
+      try {
+        const response = await generateContentWithTimeout(model, contents, systemInstruction, requestId);
+        const replyText = response?.text || "";
 
-      // If more models available, transition immediately to fallback
-      if (mIdx < modelsToTry.length - 1) {
-        console.warn(`[BioAI Provider][${requestId}] Model ${model} failed, immediately trying next model...`);
-        continue;
+        if (!replyText.trim()) {
+          throw new Error("Received empty text from AI provider.");
+        }
+
+        const duration = Date.now() - executionStartTime;
+        console.log(`[BioAI Success] requestId=${requestId} model=${model} duration=${duration}ms fallbackUsed=${isFallback}`);
+
+        return { 
+          text: replyText, 
+          modelUsed: model, 
+          fallbackUsed: isFallback 
+        };
+      } catch (err: any) {
+        const classification = classifyAiError(err);
+        lastErrorDetail = { ...classification, modelAttempted: model, originalError: err };
+
+        console.warn(`[BioAI Provider] model=${model} status=${classification.httpStatus} category=${classification.category} requestId=${requestId}`);
+
+        // If non-recoverable error (e.g. 401 Auth or 400 Bad Request): fail immediately
+        if (!classification.canTryFallback && !classification.canRetrySameModel) {
+          console.error(`[BioAI Failure] code=${classification.category} message=${classification.message} requestId=${requestId}`);
+          const fatalErr: any = new Error(classification.message);
+          fatalErr.code = classification.category;
+          fatalErr.status = classification.httpStatus;
+          fatalErr.lastAttemptedModel = model;
+          throw fatalErr;
+        }
+
+        // If invalid model (404), DO NOT retry the same model! Immediately break to next fallback model
+        if (!classification.canRetrySameModel) {
+          console.warn(`[BioAI Provider] Model ${model} is invalid/unsupported. Immediately moving to next fallback model.`);
+          break;
+        }
+
+        // If we can retry the same model and have attempts remaining:
+        if (attempt < maxAttempts) {
+          const delay = getBackoffDelayMs(attempt);
+          console.log(`[BioAI Retry] reason=${classification.category} delay=${delay}ms model=${model} requestId=${requestId}`);
+          await new Promise(res => setTimeout(res, delay));
+        } else {
+          console.warn(`[BioAI Provider] Model ${model} exhausted max attempts (${maxAttempts}).`);
+        }
       }
     }
   }
 
-  if (lastError) {
-    lastError.lastAttemptedModel = lastAttemptedModel;
-  }
-  throw lastError;
+  // All candidate models and retries exhausted
+  console.error(`[BioAI Failure] All candidate models exhausted for requestId=${requestId}. Last model=${lastAttemptedModel} category=${lastErrorDetail?.category}`);
+  const finalError: any = new Error(lastErrorDetail?.message || "BioAI service is temporarily unavailable.");
+  finalError.code = lastErrorDetail?.category || "SERVICE_UNAVAILABLE";
+  finalError.status = lastErrorDetail?.httpStatus || 500;
+  finalError.lastAttemptedModel = lastAttemptedModel;
+  throw finalError;
 }
 
 // ----------------------------------------------------------------------------
@@ -304,9 +385,7 @@ Keep explanations scientific, clear, concise, and professional. Avoid marketing 
 
     console.log(`[BioAI][${requestId}] Start processing request. Prompt length: ${message.length} chars. History length: ${contents.length - 1} msgs.`);
 
-    const { response, modelUsed, fallbackUsed } = await executeAiRequestWithRetryAndFallback(contents, systemInstruction, requestId);
-
-    const replyText = response.text || "No response text generated by BioAI.";
+    const { text, modelUsed, fallbackUsed } = await executeAiRequestWithRetryAndFallback(contents, systemInstruction, requestId);
     const totalDuration = Date.now() - routeStartTime;
 
     console.log(`[BioAI][${requestId}] Request completed successfully in ${totalDuration}ms. Model used: ${modelUsed}. Fallback used: ${fallbackUsed}`);
@@ -314,71 +393,225 @@ Keep explanations scientific, clear, concise, and professional. Avoid marketing 
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     return res.status(200).json({ 
       ok: true, 
-      text: replyText, 
-      modelUsed 
+      text, 
+      modelUsed,
+      requestId
     });
 
   } catch (err: any) {
     const totalDuration = Date.now() - routeStartTime;
-    const modelUsed = err?.lastAttemptedModel || AI_CONFIG.PRIMARY_MODEL;
-    console.error(`[BioAI][${requestId}] Route execution failed after ${totalDuration}ms:`, {
-      status: err?.status || err?.statusCode || err?.code || 500,
-      message: err?.message || String(err),
-      modelUsed
-    });
+    const modelUsed = err?.lastAttemptedModel || err?.modelAttempted || AI_CONFIG.PRIMARY_MODEL;
+    const classification = classifyAiError(err);
+    const errCode = err?.code || classification.category;
+    const errMessage = err?.message || classification.message;
+    const httpStatus = err?.status || classification.httpStatus || 500;
+
+    console.error(`[BioAI Failure] requestId=${requestId} duration=${totalDuration}ms modelUsed=${modelUsed} code=${errCode}:`, errMessage);
 
     res.setHeader("Content-Type", "application/json; charset=utf-8");
+    return res.status(httpStatus).json({
+      ok: false,
+      error: {
+        code: errCode,
+        message: errMessage
+      },
+      modelUsed,
+      requestId
+    });
+  }
+});
 
-    if (isAuthError(err)) {
-      return res.status(401).json({
-        ok: false,
-        error: "BioAI configuration error. Please check your GEMINI_API_KEY in server secrets.",
-        code: "UNAUTHORIZED",
-        modelUsed
-      });
-    }
+// ----------------------------------------------------------------------------
+// GET /api/ai/config - Single Source of Truth for BioAI Configuration
+// ----------------------------------------------------------------------------
+app.get("/api/ai/config", (_req, res) => {
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  return res.status(200).json({
+    ok: true,
+    primaryModel: AI_CONFIG.PRIMARY_MODEL,
+    fallbackModels: AI_CONFIG.FALLBACK_MODELS,
+    configured: Boolean(process.env.GEMINI_API_KEY)
+  });
+});
 
-    if (isBadRequestError(err)) {
+// ----------------------------------------------------------------------------
+// POST /api/structure/resolve - Sequence-Derived 3D Structure Resolution Service
+// ----------------------------------------------------------------------------
+app.post("/api/structure/resolve", async (req, res) => {
+  res.setHeader("Content-Type", "application/json");
+
+  try {
+    const {
+      sequence,
+      sequenceId,
+      sequenceVersion,
+      sequenceHash,
+      accession,
+      sequenceType,
+      allowSequenceDerivedFallback,
+      mutations,
+      originalSequence,
+      templatePdbId,
+      templatePdbText
+    } = req.body;
+
+    if (!sequence || typeof sequence !== "string" || !sequence.trim()) {
       return res.status(400).json({
         ok: false,
-        error: "Invalid request parameters sent to BioAI.",
-        code: "BAD_REQUEST",
-        modelUsed
+        error: "A valid non-empty biological sequence is required to resolve 3D structure.",
+        code: "INVALID_SEQUENCE"
       });
     }
 
-    if (err?.status === 429 || (err?.message || "").includes("quota") || (err?.message || "").includes("429")) {
-      return res.status(429).json({
-        ok: false,
-        error: "BioAI is experiencing high request volume. Please try again in a moment.",
-        code: "RATE_LIMIT",
-        modelUsed
-      });
-    }
+    const structure = await resolveStructureForSequence({
+      sequence,
+      sequenceId,
+      sequenceVersion,
+      sequenceHash,
+      accession,
+      sequenceType,
+      allowSequenceDerivedFallback: allowSequenceDerivedFallback !== false,
+      mutations,
+      originalSequence,
+      templatePdbId,
+      templatePdbText
+    });
 
-    if (err?.status === 504 || err?.code === "PROVIDER_TIMEOUT" || (err?.message || "").includes("timed out")) {
-      return res.status(500).json({
-        ok: false,
-        error: "BioAI provider timed out while generating a response. Please try again.",
-        code: "PROVIDER_TIMEOUT",
-        modelUsed
-      });
-    }
-
-    if (isTransientOrTimeoutError(err)) {
-      return res.status(500).json({
-        ok: false,
-        error: "BioAI is temporarily unavailable. The AI provider is experiencing high demand. Please try again shortly.",
-        code: "SERVICE_UNAVAILABLE",
-        modelUsed
-      });
-    }
-
-    return res.status(500).json({ 
+    return res.json({
+      ok: true,
+      structure
+    });
+  } catch (err: any) {
+    console.error("[Structure Service Route Error]", err);
+    return res.status(500).json({
       ok: false,
-      error: "BioAI generation error. The AI provider could not complete your request. Please try again.",
-      code: "AI_PROVIDER_ERROR",
-      modelUsed
+      error: err?.message || "Failed to resolve 3D macromolecular structure from sequence.",
+      code: "STRUCTURE_RESOLUTION_ERROR"
+    });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /api/ncbi/fetch - Backend Proxy for NCBI E-utilities efetch.fcgi
+// Resolves CORS issues, handles large sequence range requests, and sets robust timeouts
+// ----------------------------------------------------------------------------
+app.get("/api/ncbi/fetch", async (req, res) => {
+  const { db, id, rettype = "fasta", retmode = "text", seq_start, seq_stop, strand } = req.query;
+
+  if (!id || typeof id !== "string") {
+    res.setHeader("Content-Type", "application/json");
+    return res.status(400).json({ ok: false, error: "Accession ID parameter 'id' is required." });
+  }
+
+  const normalizedDb = (db === "nucleotide" || db === "nuccore" || !db) ? "nuccore" : (db === "protein" ? "protein" : String(db));
+
+  try {
+    const url = new URL("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi");
+    url.searchParams.set("db", normalizedDb);
+    url.searchParams.set("id", String(id).trim());
+    url.searchParams.set("rettype", String(rettype));
+    url.searchParams.set("retmode", String(retmode));
+
+    if (seq_start && !isNaN(Number(seq_start))) {
+      url.searchParams.set("seq_start", String(seq_start));
+    }
+    if (seq_stop && !isNaN(Number(seq_stop))) {
+      url.searchParams.set("seq_stop", String(seq_stop));
+    }
+    if (strand) {
+      url.searchParams.set("strand", String(strand));
+    } else if (normalizedDb === "nuccore") {
+      url.searchParams.set("strand", "1");
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 45_000);
+
+    const ncbiRes = await fetch(url.toString(), {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "BioCodeStudio/1.0 (bioinformatics-studio@biocode.dev)"
+      }
+    });
+    clearTimeout(timeoutId);
+
+    if (!ncbiRes.ok) {
+      res.setHeader("Content-Type", "application/json");
+      return res.status(ncbiRes.status).json({
+        ok: false,
+        error: `NCBI Entrez returned HTTP ${ncbiRes.status}: ${ncbiRes.statusText}`
+      });
+    }
+
+    const text = await ncbiRes.text();
+    if (!text || text.includes("Error occurred") || text.includes("<!DOCTYPE html>")) {
+      res.setHeader("Content-Type", "application/json");
+      return res.status(404).json({
+        ok: false,
+        error: `NCBI record ${id} was not accessible or returned an invalid payload.`
+      });
+    }
+
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    return res.status(200).send(text);
+  } catch (err: any) {
+    console.error(`[NCBI Proxy Error] Failed to fetch ${id} from db ${normalizedDb}:`, err);
+    res.setHeader("Content-Type", "application/json");
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || "Failed to retrieve sequence from NCBI E-utilities."
+    });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /api/ncbi/summary - Backend Proxy for NCBI E-utilities esummary.fcgi
+// ----------------------------------------------------------------------------
+app.get("/api/ncbi/summary", async (req, res) => {
+  const { db, id } = req.query;
+
+  if (!id || typeof id !== "string") {
+    res.setHeader("Content-Type", "application/json");
+    return res.status(400).json({ ok: false, error: "Accession ID parameter 'id' is required." });
+  }
+
+  const normalizedDb = (db === "nucleotide" || db === "nuccore" || !db) ? "nuccore" : (db === "protein" ? "protein" : String(db));
+
+  try {
+    const url = new URL("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi");
+    url.searchParams.set("db", normalizedDb);
+    url.searchParams.set("id", String(id).trim());
+    url.searchParams.set("retmode", "json");
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 20_000);
+
+    const ncbiRes = await fetch(url.toString(), {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "BioCodeStudio/1.0 (bioinformatics-studio@biocode.dev)"
+      }
+    });
+    clearTimeout(timeoutId);
+
+    if (!ncbiRes.ok) {
+      res.setHeader("Content-Type", "application/json");
+      return res.status(ncbiRes.status).json({
+        ok: false,
+        error: `NCBI Entrez returned HTTP ${ncbiRes.status}: ${ncbiRes.statusText}`
+      });
+    }
+
+    const json = await ncbiRes.json();
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    return res.status(200).json(json);
+  } catch (err: any) {
+    console.error(`[NCBI Summary Proxy Error] Failed for ${id}:`, err);
+    res.setHeader("Content-Type", "application/json");
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || "Failed to retrieve summary from NCBI E-utilities."
     });
   }
 });

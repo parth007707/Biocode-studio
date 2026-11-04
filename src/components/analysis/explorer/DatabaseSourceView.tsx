@@ -42,6 +42,8 @@ import {
 import { LargeSequenceModal } from './LargeSequenceModal';
 import { FullSequenceProgressModal } from './FullSequenceProgressModal';
 import { processFullBiologicalRecord, ChunkedProgressReport } from '../../../lib/bio/chunkedSequenceProcessor';
+import { parseAndValidateFasta } from '../../../lib/bio/sequenceParser';
+import { sequenceLoader } from '../../../services/bio/sequenceLoader';
 
 interface DatabaseSourceViewProps {
   source: DatabaseSourceMeta;
@@ -277,7 +279,31 @@ export const DatabaseSourceView: React.FC<DatabaseSourceViewProps> = ({
     const abortController = new AbortController();
     streamAbortControllerRef.current = abortController;
 
-    const isLarge = (rawLength !== undefined && rawLength > 10000) || source.category === 'NCBI';
+    // If record is a whole chromosome or massive genomic assembly (> 250,000 bp),
+    // show its true length and offer region selection with explicit start/end coordinates.
+    let effectiveLength = rawLength;
+    if (!effectiveLength && source.category === 'NCBI') {
+      try {
+        const summary = await ncbiAdapter.getSummary(db, accession, abortController.signal);
+        if (summary?.length) {
+          effectiveLength = summary.length;
+        }
+      } catch {
+        // non-blocking
+      }
+    }
+
+    if (effectiveLength && effectiveLength > 250000) {
+      handleSelectRegion({
+        ...item,
+        length: effectiveLength,
+        sequenceLength: effectiveLength,
+        totalLength: effectiveLength
+      });
+      return;
+    }
+
+    const isLarge = (effectiveLength !== undefined && effectiveLength > 10000) || source.category === 'NCBI';
 
     if (isLarge) {
       setIsProcessingCompleteRecord(true);
@@ -287,14 +313,14 @@ export const DatabaseSourceView: React.FC<DatabaseSourceViewProps> = ({
         organism,
         sourceDb: db,
         category: source.category,
-        totalLength: rawLength
+        totalLength: effectiveLength
       });
       setProgressData({
         stage: 'downloading',
         currentChunk: 1,
         totalChunks: 10,
         basesProcessed: 0,
-        totalBases: rawLength || 100000,
+        totalBases: effectiveLength || 100000,
         percentage: 5,
         message: 'Connecting to biological data stream...'
       });
@@ -302,55 +328,45 @@ export const DatabaseSourceView: React.FC<DatabaseSourceViewProps> = ({
 
     setIsFetchingFasta(accession);
     try {
-      let fastaString = '';
+      const loadRes = await sequenceLoader.loadTarget({
+        accession,
+        source: source.category === 'NCBI' ? 'NCBI' : source.category === 'UniProt' ? 'UNIPROT' : source.category === 'RCSB_PDB' ? 'RCSB_PDB' : 'AUTO',
+        sequenceType: seqType === 'Protein' ? 'PROTEIN' : 'AUTO',
+        definition: title,
+        organism,
+        signal: abortController.signal
+      });
 
-      if (source.category === 'NCBI') {
-        const ncbiDb = ncbiAdapter.getDbFromSourceId(source.id);
-        const result = await processFullBiologicalRecord({
-          accession,
-          title,
-          organism,
-          sourceCategory: 'NCBI',
-          sourceDb: ncbiDb,
-          totalLength: rawLength,
-          signal: abortController.signal,
-          onProgress: (report) => {
-            setProgressData(report);
-          }
-        });
-        fastaString = result.sequence.startsWith('>') 
-          ? result.sequence 
-          : `>${accession} ${title}\n${result.sequence}`;
-      } else if (source.category === 'UniProt') {
-        fastaString = await uniprotAdapter.fetchFasta(accession);
-      } else if (source.category === 'RCSB_PDB') {
-        fastaString = await pdbAdapter.fetchFasta(accession);
-      } else if (source.category === 'BLAST') {
-        fastaString = item.alignmentSequence || item.subjectSequence || `>${accession} ${title}\nATGCGATCGATCGATCGATCGATC`;
-      }
-
-      if (!fastaString || !fastaString.trim()) {
-        throw new Error(`Unable to fetch valid FASTA sequence for accession ${accession}`);
+      if (!loadRes.success || !loadRes.sequence) {
+        throw new Error(loadRes.error || `Unable to fetch valid FASTA sequence for accession ${accession}`);
       }
 
       setIsProcessingCompleteRecord(false);
       setIsFetchingFasta(null);
 
+      const fastaString = loadRes.rawFasta || `>${loadRes.accession} ${loadRes.definition}\n${loadRes.sequence}`;
+
       onOpenWorkbenchWithSequence(fastaString, {
         source: source.name,
         database: source.category,
-        accession,
-        title,
-        organism,
+        accession: loadRes.accession,
+        title: loadRes.definition,
+        organism: loadRes.organism,
         isPartialRange: false,
-        totalLength: rawLength || fastaString.length,
-        sequenceType: seqType
+        totalLength: loadRes.length,
+        sequenceType: loadRes.sequenceType
       });
     } catch (err: any) {
       if (err.name === 'AbortError') {
         console.log('[DatabaseSourceView] Full sequence processing cancelled by user.');
       } else {
         console.error('[DatabaseSourceView] Failed to process full sequence:', err);
+        if (err?.message && (err.message.includes('large chromosome/genomic record') || err.message.includes('Select Region'))) {
+          handleSelectRegion({
+            ...item,
+            length: effectiveLength || 84276897
+          });
+        }
         setErrorMessage(`Failed to complete sequence analysis for ${accession}: ${err.message}`);
       }
       setIsProcessingCompleteRecord(false);

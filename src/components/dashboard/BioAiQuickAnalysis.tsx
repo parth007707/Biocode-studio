@@ -23,9 +23,21 @@ export const BioAiQuickAnalysis: React.FC<BioAiQuickAnalysisProps> = ({
   const [prompt, setPrompt] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [response, setResponse] = useState<string | null>(null);
-  const [modelUsed, setModelUsed] = useState<string>('gemini-3.7-flash');
+  const [modelUsed, setModelUsed] = useState<string>('gemini-3.1-flash-lite');
   const [copied, setCopied] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    let isMounted = true;
+    aiService.getAiConfig().then((cfg) => {
+      if (isMounted && cfg?.primaryModel) {
+        setModelUsed(cfg.primaryModel);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const quickPrompts = [
     'Explain biological function of this sequence',

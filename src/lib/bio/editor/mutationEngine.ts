@@ -355,6 +355,12 @@ export function computeFastSequenceDiff(
       let advanceJ = 0;
 
       for (let k = 1; k <= 30; k++) {
+        if (i + k < lenO && j + k < lenM && origSlice[i + k] === modSlice[j + k]) {
+          advanceI = k;
+          advanceJ = k;
+          foundSync = true;
+          break;
+        }
         if (i + k < lenO && origSlice[i + k] === modSlice[j]) {
           advanceI = k;
           advanceJ = 0;
@@ -363,12 +369,6 @@ export function computeFastSequenceDiff(
         }
         if (j + k < lenM && origSlice[i] === modSlice[j + k]) {
           advanceI = 0;
-          advanceJ = k;
-          foundSync = true;
-          break;
-        }
-        if (i + k < lenO && j + k < lenM && origSlice[i + k] === modSlice[j + k]) {
-          advanceI = k;
           advanceJ = k;
           foundSync = true;
           break;
@@ -549,10 +549,7 @@ export function computeMutationsFromSequences(
   const windowStart = Math.max(1, firstMismatch + 1 - 10);
   const windowEnd = Math.max(windowStart + 1, Math.max(lastMismatchOrig + 1 + 10, lastMismatchMod + 1 + 10));
 
-  const origSlice = original.substring(windowStart - 1, Math.min(original.length, windowEnd));
-  const modSlice = modified.substring(windowStart - 1, Math.min(modified.length, windowEnd));
-
-  const diffs = computeFastSequenceDiff(origSlice, modSlice, windowStart, windowStart + origSlice.length - 1);
+  const diffs = computeFastSequenceDiff(original, modified, windowStart, windowEnd);
   const mutations: SequenceMutation[] = [];
   const now = new Date().toISOString();
 

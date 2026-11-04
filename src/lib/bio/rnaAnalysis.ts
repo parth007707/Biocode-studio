@@ -30,6 +30,8 @@ export interface RNASecondaryStructureResult {
     loopSequence: string;
     closingPair: [number, number];
   }>;
+  scope?: string;
+  isDomainWindow?: boolean;
 }
 
 // Can pair test: Watson-Crick (A-U, G-C) and Wobble (G-U)
@@ -248,6 +250,8 @@ export function predictRNASecondaryStructure(seq: string): RNASecondaryStructure
     loopCount: hairpins.length,
     estimatedFreeEnergyKcal: Number(freeEnergy.toFixed(1)),
     stems,
-    hairpins
+    hairpins,
+    scope: n <= maxFoldLength ? 'Full Sequence' : `5' Structural Domain Window (${maxFoldLength} nt)`,
+    isDomainWindow: n > maxFoldLength
   };
 }

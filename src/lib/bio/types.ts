@@ -26,6 +26,7 @@ export interface SequenceIntelligenceResult {
   length: number;
   isValid: boolean;
   validationErrors: string[];
+  validationDetails?: SequenceValidationDetails;
   engine: EngineType;
   visualizationMode: VisualizationMode;
   availableAnalyses: AnalysisPipelineType[];
@@ -36,6 +37,47 @@ export interface SequenceIntelligenceResult {
     strand: string;
     topology: string;
   };
+}
+
+export type InvalidCharacterCategory =
+  | 'NUMERIC'
+  | 'SYMBOL'
+  | 'NON_NUCLEOTIDE'
+  | 'NON_PROTEIN'
+  | 'MIXED_TU'
+  | 'WHITESPACE'
+  | 'UNRECOGNIZED';
+
+export interface InvalidCharacterFindingDetail {
+  char: string;
+  count: number;
+  positions: number[]; // 1-based indices in the sequence
+  category: InvalidCharacterCategory;
+  categoryLabel: string;
+  description: string;
+}
+
+export interface SequenceValidationDetails {
+  isValid: boolean;
+  validationStatus: 'VALID' | 'WARNING' | 'INVALID' | 'EMPTY';
+  targetType: SequenceType;
+  totalInvalidCount: number;
+  distinctInvalidCount: number;
+  invalidFindings: InvalidCharacterFindingDetail[];
+  hasNumbers: boolean;
+  hasSymbols: boolean;
+  hasNonNucleotideChars: boolean;
+  hasNonProteinChars: boolean;
+  hasMixedTU: boolean;
+  mixedTUPositions?: { tPositions: number[]; uPositions: number[] };
+  errors: string[];
+  warnings: string[];
+  sanitizedCleanSequence: string;
+  sanitizedDnaSequence: string;
+  sanitizedRnaSequence: string;
+  sanitizedProteinSequence: string;
+  validResidueCount: number;
+  totalInputLength: number;
 }
 
 export interface NucleotideComposition {

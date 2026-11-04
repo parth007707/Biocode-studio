@@ -95,19 +95,41 @@ export function detectSequence(
       };
     }
 
+    // Explicit DNA from metadata
+    if (
+      moltype.includes('dna') ||
+      seqType.includes('dna') ||
+      seqType === 'genomic dna' ||
+      seqType === 'nucleotide'
+    ) {
+      return {
+        detectedType: 'DNA',
+        confidence: 1.0,
+        reason: `Biological Database DNA Record (${metadata.accession || metadata.source})`,
+        isAmbiguous: false,
+        isMixedTU: false,
+        biologicalClassification: {
+          molecule_type: metadata.molecule_type || 'genomic DNA',
+          sequence_type: metadata.sequence_type || 'Genomic DNA',
+          strand: metadata.strand || 'double-stranded',
+          topology: metadata.topology || 'linear'
+        }
+      };
+    }
+
     // RefSeq mRNA Transcripts (NM_, XM_)
     if (
       accUpper.startsWith('NM_') ||
       accUpper.startsWith('XM_') ||
       moltype === 'mrna' ||
-      seqType.includes('mrna') ||
-      title.includes('mrna') ||
-      title.includes('transcript variant')
+      seqType.includes('mrna')
     ) {
+      // In RefSeq/NCBI, transcripts are stored in DNA alphabet (with T). If sequence has U and no T, it is RNA.
+      const isActualRnaWithU = hasU && !hasT;
       return {
-        detectedType: 'RNA',
+        detectedType: isActualRnaWithU ? 'RNA' : 'DNA',
         confidence: 1.0,
-        reason: `RefSeq mRNA Transcript (${metadata.accession}) - Single-Stranded Coding RNA`,
+        reason: `RefSeq mRNA Transcript (${metadata.accession}) - ${isActualRnaWithU ? 'Single-Stranded RNA' : 'cDNA / DNA Transcript Representation'}`,
         isAmbiguous: false,
         isMixedTU: false,
         biologicalClassification: {
@@ -128,15 +150,13 @@ export function detectSequence(
       moltype.includes('trna') ||
       moltype.includes('snrna') ||
       moltype.includes('lncrna') ||
-      seqType.includes('non-coding') ||
-      title.includes('non-coding rna') ||
-      title.includes('ncrna') ||
-      title.includes('lncrna')
+      seqType.includes('non-coding')
     ) {
+      const isActualRnaWithU = hasU && !hasT;
       return {
-        detectedType: 'RNA',
+        detectedType: isActualRnaWithU ? 'RNA' : 'DNA',
         confidence: 1.0,
-        reason: `RefSeq Non-Coding RNA (${metadata.accession}) - Single-Stranded ncRNA`,
+        reason: `RefSeq Non-Coding RNA (${metadata.accession})`,
         isAmbiguous: false,
         isMixedTU: false,
         biologicalClassification: {
@@ -248,10 +268,11 @@ export function detectSequence(
       headerLower.includes('mrna') ||
       (headerLower.includes('transcript') && !headerLower.includes('dna'))
     ) {
+      const isActualRnaWithU = hasU && !hasT;
       return {
-        detectedType: 'RNA',
+        detectedType: isActualRnaWithU ? 'RNA' : 'DNA',
         confidence: 0.95,
-        reason: 'FASTA header annotation identifies sequence as mRNA Transcript',
+        reason: `FASTA header annotation identifies sequence as ${isActualRnaWithU ? 'mRNA Transcript' : 'cDNA / DNA Transcript representation'}`,
         isAmbiguous: false,
         isMixedTU: false
       };
@@ -263,10 +284,11 @@ export function detectSequence(
       headerLower.includes('ncrna') ||
       headerLower.includes('lncrna')
     ) {
+      const isActualRnaWithU = hasU && !hasT;
       return {
-        detectedType: 'RNA',
+        detectedType: isActualRnaWithU ? 'RNA' : 'DNA',
         confidence: 0.95,
-        reason: 'FASTA header annotation identifies sequence as Non-Coding RNA (ncRNA)',
+        reason: `FASTA header annotation identifies sequence as ${isActualRnaWithU ? 'Non-Coding RNA (ncRNA)' : 'ncDNA / DNA representation'}`,
         isAmbiguous: false,
         isMixedTU: false
       };

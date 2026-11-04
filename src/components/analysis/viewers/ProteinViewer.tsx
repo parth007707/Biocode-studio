@@ -1,521 +1,380 @@
-import React, { useEffect, useRef, useState } from 'react';
-import * as THREE from 'three';
-import { RotateCw, ZoomIn, ZoomOut, Maximize2, Minimize2, Play, Pause, RefreshCw, Layers, ShieldCheck, Sparkles, AlertCircle } from 'lucide-react';
+import React, { useRef, useState, useMemo, useEffect } from 'react';
+import { 
+  ZoomIn, ZoomOut, Maximize2, Minimize2, 
+  Info, Sparkles, CheckCircle2, Compass, MoveHorizontal, ArrowRight
+} from 'lucide-react';
 import { AminoAcidComposition } from '../../../lib/bio/proteinAnalysis';
 
-interface ProteinViewerProps {
+export interface ProteinViewerProps {
   sequence: string;
+  fullSequence?: string;
+  startPosition?: number;
+  totalLength?: number;
   proteinAnalysis: AminoAcidComposition;
   structureState?: 'known' | 'predicted' | 'unavailable';
   className?: string;
+  onSwitchTo3D?: () => void;
 }
 
-export type ProteinRenderMode = 'ribbon' | 'ball_stick' | 'surface' | 'wireframe';
-export type ProteinColorMode = 'hydrophobicity' | 'secondary' | 'spectrum';
+const AA_DETAILS: Record<string, { code3: string; name: string; type: 'hydrophobic' | 'polar' | 'positive' | 'negative'; color: string }> = {
+  A: { code3: 'ALA', name: 'Alanine', type: 'hydrophobic', color: '#F97316' },
+  V: { code3: 'VAL', name: 'Valine', type: 'hydrophobic', color: '#F97316' },
+  I: { code3: 'ILE', name: 'Isoleucine', type: 'hydrophobic', color: '#EA580C' },
+  L: { code3: 'LEU', name: 'Leucine', type: 'hydrophobic', color: '#EA580C' },
+  M: { code3: 'MET', name: 'Methionine', type: 'hydrophobic', color: '#F59E0B' },
+  F: { code3: 'PHE', name: 'Phenylalanine', type: 'hydrophobic', color: '#D97706' },
+  W: { code3: 'TRP', name: 'Tryptophan', type: 'hydrophobic', color: '#B45309' },
+  P: { code3: 'PRO', name: 'Proline', type: 'hydrophobic', color: '#FB923C' },
+  G: { code3: 'GLY', name: 'Glycine', type: 'hydrophobic', color: '#F59E0B' },
 
-// Hydrophobicity colors
-const HYDROPHOBIC_COLORS: Record<string, number> = {
-  // Hydrophobic (Orange/Amber)
-  A: 0xf97316, V: 0xf97316, I: 0xea580c, L: 0xea580c, M: 0xf59e0b, F: 0xd97706, W: 0xb45309, P: 0xfb923c,
-  // Polar uncharged (Teal/Cyan)
-  S: 0x06b6d4, T: 0x0891b2, C: 0x14b8a6, Y: 0x0d9488, N: 0x22d3ee, Q: 0x67e8f9,
-  // Positively charged (Blue/Violet)
-  K: 0x3b82f6, R: 0x2563eb, H: 0x6366f1,
-  // Negatively charged (Red/Rose)
-  D: 0xef4444, E: 0xdc2626
+  S: { code3: 'SER', name: 'Serine', type: 'polar', color: '#06B6D4' },
+  T: { code3: 'THR', name: 'Threonine', type: 'polar', color: '#0891B2' },
+  C: { code3: 'CYS', name: 'Cysteine', type: 'polar', color: '#14B8A6' },
+  Y: { code3: 'TYR', name: 'Tyrosine', type: 'polar', color: '#0D9488' },
+  N: { code3: 'ASN', name: 'Asparagine', type: 'polar', color: '#22D3EE' },
+  Q: { code3: 'GLN', name: 'Glutamine', type: 'polar', color: '#67E8F9' },
+
+  K: { code3: 'LYS', name: 'Lysine', type: 'positive', color: '#3B82F6' },
+  R: { code3: 'ARG', name: 'Arginine', type: 'positive', color: '#2563EB' },
+  H: { code3: 'HIS', name: 'Histidine', type: 'positive', color: '#6366F1' },
+
+  D: { code3: 'ASP', name: 'Aspartic Acid', type: 'negative', color: '#EF4444' },
+  E: { code3: 'GLU', name: 'Glutamic Acid', type: 'negative', color: '#DC2626' }
 };
 
-// Secondary structure colors (Helix = Magenta, Sheet = Yellow/Gold, Coil = Cyan)
-const SECONDARY_COLORS = {
-  helix: 0xd946ef,
-  sheet: 0xfacc15,
-  coil: 0x06b6d4
-};
+const BASE_WIDTH = 38;
+const TRACK_HEIGHT = 380;
 
 export const ProteinViewer: React.FC<ProteinViewerProps> = ({
   sequence,
+  fullSequence,
+  startPosition = 1,
+  totalLength,
   proteinAnalysis,
-  structureState = 'predicted',
-  className = ''
+  className = '',
+  onSwitchTo3D
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  const cleanSeq = useMemo(() => {
+    return sequence.toUpperCase().replace(/[^ACDEFGHIKLMNPQRSTVWY]/g, '');
+  }, [sequence]);
+
+  const seqLength = cleanSeq.length;
+  const effectiveTotalLength = totalLength || (fullSequence ? fullSequence.length : seqLength);
+
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [autoRotate, setAutoRotate] = useState(true);
-  const [renderMode, setRenderMode] = useState<ProteinRenderMode>('ribbon');
-  const [colorMode, setColorMode] = useState<ProteinColorMode>('hydrophobicity');
+  const [zoomLevel, setZoomLevel] = useState<number>(1);
+  const [hasRendered, setHasRendered] = useState<boolean>(() => seqLength > 0);
+  const [renderedCount, setRenderedCount] = useState<number>(() => seqLength);
 
-  const sceneRef = useRef<THREE.Scene | null>(null);
-  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
-  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  const groupRef = useRef<THREE.Group | null>(null);
-  const animFrameIdRef = useRef<number | null>(null);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
 
-  const cleanSeq = sequence.toUpperCase().replace(/[^ACDEFGHIKLMNPQRSTVWY]/g, '') || 'MKTLLILT';
-  const displaySeq = cleanSeq.slice(0, 150);
-  const isAvailable = displaySeq.length >= 4 && structureState !== 'unavailable';
+  const [scrollLeft, setScrollLeft] = useState<number>(0);
+  const [containerWidth, setContainerWidth] = useState<number>(800);
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container || !isAvailable) return;
-
-    const width = container.clientWidth || 500;
-    const height = container.clientHeight || 450;
-
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xf8f9fe);
-    sceneRef.current = scene;
-
-    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
-    camera.position.set(0, 0, 45);
-    cameraRef.current = camera;
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
-    renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.shadowMap.enabled = true;
-    rendererRef.current = renderer;
-
-    while (container.firstChild) {
-      container.removeChild(container.firstChild);
-    }
-    container.appendChild(renderer.domElement);
-
-    // Dynamic 3-point Studio Lighting
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
-    scene.add(ambientLight);
-
-    const dirLight1 = new THREE.DirectionalLight(0xffffff, 1.4);
-    dirLight1.position.set(25, 40, 35);
-    scene.add(dirLight1);
-
-    const dirLight2 = new THREE.DirectionalLight(0xa855f7, 0.9);
-    dirLight2.position.set(-30, -20, -25);
-    scene.add(dirLight2);
-
-    const dirLight3 = new THREE.DirectionalLight(0x06b6d4, 0.8);
-    dirLight3.position.set(0, -35, 20);
-    scene.add(dirLight3);
-
-    const rootGroup = new THREE.Group();
-    groupRef.current = rootGroup;
-    scene.add(rootGroup);
-
-    const n = displaySeq.length;
-    const caPoints: THREE.Vector3[] = [];
-    const sphereGeo = new THREE.SphereGeometry(0.65, 16, 16);
-    const atomGeo = new THREE.SphereGeometry(0.35, 12, 12);
-    const stickGeo = new THREE.CylinderGeometry(0.14, 0.14, 1, 10);
-
-    // Secondary structure classification per residue
-    // Build 3D coordinates using Ramachandran phi/psi angles (Alpha Helix: ~3.6 res/turn, Beta Sheet: extended zigzag)
-    const dom = proteinAnalysis.predictedSecondaryStructure.dominantConformation;
-
-    let currPos = new THREE.Vector3(0, -n * 0.4, 0);
-    let angle = 0;
-
-    for (let i = 0; i < n; i++) {
-      const aa = displaySeq[i];
-      let p: THREE.Vector3;
-
-      if (dom === 'Alpha-Helix' || (i % 12 < 7 && n > 15)) {
-        // Helical segment: 3.6 residues per turn, radius 3.2, translation 1.2
-        angle = i * (Math.PI * 2 / 3.6);
-        const radius = 3.2;
-        p = new THREE.Vector3(
-          Math.cos(angle) * radius,
-          (i - n / 2) * 1.3,
-          Math.sin(angle) * radius
-        );
-      } else if (dom === 'Beta-Sheet' || (i % 8 >= 4 && n > 15)) {
-        // Extended beta-strand zigzag
-        const xZig = (i % 2 === 0 ? 1 : -1) * 2.0;
-        const zCurv = Math.sin(i * 0.3) * 3.0;
-        p = new THREE.Vector3(
-          xZig,
-          (i - n / 2) * 1.6,
-          zCurv
-        );
-      } else {
-        // Globular random coil / loop
-        const t = (i / n) * Math.PI * 4;
-        const r = 4.5 + Math.sin(i * 0.5) * 2.0;
-        p = new THREE.Vector3(
-          Math.cos(t) * r,
-          (i - n / 2) * 1.1 + Math.sin(i) * 1.2,
-          Math.sin(t) * r + Math.cos(i * 0.7) * 1.5
-        );
+    const updateDimensions = () => {
+      if (containerRef.current) {
+        const w = containerRef.current.clientWidth;
+        if (w > 0) setContainerWidth(w);
       }
-
-      caPoints.push(p);
-
-      // Determine residue color
-      let resColor = 0x38bdf8;
-      if (colorMode === 'hydrophobicity') {
-        resColor = HYDROPHOBIC_COLORS[aa] || 0x38bdf8;
-      } else if (colorMode === 'secondary') {
-        resColor = (dom === 'Alpha-Helix' || (i % 12 < 7 && n > 15))
-          ? SECONDARY_COLORS.helix
-          : (dom === 'Beta-Sheet' || (i % 8 >= 4 && n > 15))
-          ? SECONDARY_COLORS.sheet
-          : SECONDARY_COLORS.coil;
-      } else if (colorMode === 'spectrum') {
-        // Rainbow from N-term (Blue) to C-term (Red)
-        const hue = (1 - i / n) * 0.7; // 0.7 (blue) to 0.0 (red)
-        const c = new THREE.Color().setHSL(hue, 0.9, 0.5);
-        resColor = c.getHex();
-      }
-
-      // Render mode specific geometry
-      if (renderMode === 'ball_stick') {
-        // C-alpha atom bead
-        const mat = new THREE.MeshStandardMaterial({ color: resColor, roughness: 0.2, metalness: 0.3 });
-        const sphere = new THREE.Mesh(sphereGeo, mat);
-        sphere.position.copy(p);
-        rootGroup.add(sphere);
-
-        // Side chain dummy atom
-        const sideChainDir = new THREE.Vector3(
-          Math.cos(angle + 1.2) * 1.4,
-          Math.sin(angle) * 0.6,
-          Math.sin(angle + 1.2) * 1.4
-        );
-        const scPos = new THREE.Vector3().addVectors(p, sideChainDir);
-        const scAtom = new THREE.Mesh(atomGeo, new THREE.MeshStandardMaterial({ color: resColor, roughness: 0.3 }));
-        scAtom.position.copy(scPos);
-        rootGroup.add(scAtom);
-
-        // Side chain bond
-        const scDist = p.distanceTo(scPos);
-        const scBond = new THREE.Mesh(stickGeo, mat);
-        scBond.scale.set(0.8, scDist, 0.8);
-        scBond.position.copy(new THREE.Vector3().addVectors(p, scPos).multiplyScalar(0.5));
-        scBond.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(scPos, p).normalize());
-        rootGroup.add(scBond);
-      } else if (renderMode === 'surface') {
-        const surfMat = new THREE.MeshPhysicalMaterial({
-          color: resColor,
-          roughness: 0.35,
-          metalness: 0.1,
-          transmission: 0.2,
-          transparent: true,
-          opacity: 0.9
-        });
-        const surfSphere = new THREE.Mesh(new THREE.SphereGeometry(1.6, 16, 16), surfMat);
-        surfSphere.position.copy(p);
-        rootGroup.add(surfSphere);
-      }
-    }
-
-    // Connect C-alpha trace with Ribbon tube or Wireframe
-    if (caPoints.length > 1) {
-      const curve = new THREE.CatmullRomCurve3(caPoints);
-
-      if (renderMode === 'ribbon') {
-        // Smooth extruded Ribbon
-        const tubeRadius = 0.55;
-        const tubeGeo = new THREE.TubeGeometry(curve, n * 6, tubeRadius, 12, false);
-        const ribbonMat = new THREE.MeshStandardMaterial({
-          color: colorMode === 'secondary'
-            ? SECONDARY_COLORS.helix
-            : colorMode === 'hydrophobicity'
-            ? 0x0ea5e9
-            : 0xd946ef,
-          roughness: 0.25,
-          metalness: 0.35
-        });
-
-        // Vertex coloring if spectrum mode
-        if (colorMode === 'spectrum') {
-          const colors: number[] = [];
-          const count = tubeGeo.attributes.position.count;
-          for (let k = 0; k < count; k++) {
-            const yPos = tubeGeo.attributes.position.getY(k);
-            const normY = THREE.MathUtils.clamp((yPos + (n * 0.6)) / (n * 1.2), 0, 1);
-            const c = new THREE.Color().setHSL((1 - normY) * 0.7, 0.9, 0.5);
-            colors.push(c.r, c.g, c.b);
-          }
-          tubeGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-          ribbonMat.vertexColors = true;
-        }
-
-        const tubeMesh = new THREE.Mesh(tubeGeo, ribbonMat);
-        rootGroup.add(tubeMesh);
-
-        // Add C-alpha marker beads at each residue along the ribbon
-        for (let i = 0; i < n; i++) {
-          const aa = displaySeq[i];
-          const color = colorMode === 'hydrophobicity' ? (HYDROPHOBIC_COLORS[aa] || 0x38bdf8) : 0xffffff;
-          const nodeMat = new THREE.MeshStandardMaterial({ color, roughness: 0.2, metalness: 0.4 });
-          const node = new THREE.Mesh(new THREE.SphereGeometry(0.6, 12, 12), nodeMat);
-          node.position.copy(caPoints[i]);
-          rootGroup.add(node);
-        }
-      } else if (renderMode === 'wireframe') {
-        const lineGeo = new THREE.BufferGeometry().setFromPoints(caPoints);
-        const lineMat = new THREE.LineBasicMaterial({
-          color: colorMode === 'secondary' ? 0xd946ef : 0x06b6d4,
-          linewidth: 2
-        });
-        const line = new THREE.Line(lineGeo, lineMat);
-        rootGroup.add(line);
-
-        for (let i = 0; i < n; i++) {
-          const aa = displaySeq[i];
-          const nodeMat = new THREE.MeshBasicMaterial({
-            color: HYDROPHOBIC_COLORS[aa] || 0x38bdf8,
-            wireframe: true
-          });
-          const node = new THREE.Mesh(new THREE.OctahedronGeometry(0.8, 1), nodeMat);
-          node.position.copy(caPoints[i]);
-          rootGroup.add(node);
-        }
-      } else if (renderMode === 'ball_stick') {
-        // Connect consecutive C-alphas with covalent peptide bonds
-        for (let i = 0; i < n - 1; i++) {
-          const p1 = caPoints[i];
-          const p2 = caPoints[i + 1];
-          const dist = p1.distanceTo(p2);
-          const bondMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.3, metalness: 0.3 });
-          const bond = new THREE.Mesh(stickGeo, bondMat);
-          bond.scale.set(1, dist, 1);
-          bond.position.copy(new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5));
-          bond.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(p2, p1).normalize());
-          rootGroup.add(bond);
-        }
-      }
-    }
-
-    // Adjust camera distance
-    const targetZ = Math.max(30, n * 0.7 + 15);
-    camera.position.set(0, 0, targetZ);
-
-    // Interaction handling
-    let isDragging = false;
-    let previousMousePosition = { x: 0, y: 0 };
-
-    const onMouseDown = (e: MouseEvent) => {
-      isDragging = true;
-      previousMousePosition = { x: e.clientX, y: e.clientY };
     };
+    updateDimensions();
 
-    const onMouseMove = (e: MouseEvent) => {
-      if (!isDragging || !rootGroup) return;
-      const deltaX = e.clientX - previousMousePosition.x;
-      const deltaY = e.clientY - previousMousePosition.y;
-
-      rootGroup.rotation.y += deltaX * 0.01;
-      rootGroup.rotation.x += deltaY * 0.01;
-
-      previousMousePosition = { x: e.clientX, y: e.clientY };
-    };
-
-    const onMouseUp = () => {
-      isDragging = false;
-    };
-
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      if (!camera) return;
-      camera.position.z = THREE.MathUtils.clamp(camera.position.z + e.deltaY * 0.05, 10, 160);
-    };
-
-    const domElem = renderer.domElement;
-    domElem.addEventListener('mousedown', onMouseDown);
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
-    domElem.addEventListener('wheel', onWheel, { passive: false });
-
-    const animate = () => {
-      animFrameIdRef.current = requestAnimationFrame(animate);
-      if (autoRotate && rootGroup && !isDragging) {
-        rootGroup.rotation.y += 0.007;
-      }
-      renderer.render(scene, camera);
-    };
-    animate();
-
-    const resizeObserver = new ResizeObserver(() => {
-      if (!container || !renderer || !camera) return;
-      const newWidth = container.clientWidth;
-      const newHeight = container.clientHeight;
-      camera.aspect = newWidth / newHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(newWidth, newHeight);
+    const ro = new ResizeObserver(() => {
+      requestAnimationFrame(updateDimensions);
     });
-    resizeObserver.observe(container);
+    if (containerRef.current) ro.observe(containerRef.current);
+    return () => ro.disconnect();
+  }, []);
 
-    return () => {
-      if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
-      domElem.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-      domElem.removeEventListener('wheel', onWheel);
-      resizeObserver.disconnect();
-      renderer.dispose();
-    };
-  }, [displaySeq, autoRotate, renderMode, colorMode, isAvailable, proteinAnalysis]);
-
-  const handleReset = () => {
-    if (groupRef.current && cameraRef.current) {
-      groupRef.current.rotation.set(0, 0, 0);
-      const targetZ = Math.max(30, displaySeq.length * 0.7 + 15);
-      cameraRef.current.position.set(0, 0, targetZ);
+  useEffect(() => {
+    if (seqLength > 0) {
+      setHasRendered(true);
+      setRenderedCount(seqLength);
+    } else {
+      setHasRendered(false);
+      setRenderedCount(0);
     }
-  };
+  }, [seqLength]);
 
-  const handleZoom = (direction: 'in' | 'out') => {
-    if (cameraRef.current) {
-      const step = direction === 'in' ? -5 : 5;
-      cameraRef.current.position.z = THREE.MathUtils.clamp(cameraRef.current.position.z + step, 10, 160);
+  const scaledBaseWidth = BASE_WIDTH * zoomLevel;
+  const totalDiagramWidth = Math.max(containerWidth, seqLength * scaledBaseWidth + 120);
+  const visibleStartIndex = Math.max(0, Math.floor((scrollLeft - 80) / scaledBaseWidth));
+  const visibleEndIndex = Math.min(seqLength, Math.ceil((scrollLeft + containerWidth + 80) / scaledBaseWidth));
+
+  // Determine secondary structure per residue from analysis
+  const domConformation = proteinAnalysis?.predictedSecondaryStructure?.dominantConformation || 'Alpha-Helix';
+
+  const getSecondaryType = (i: number): 'helix' | 'sheet' | 'coil' => {
+    if (domConformation === 'Alpha-Helix') {
+      return (i % 14 < 9) ? 'helix' : 'coil';
+    } else if (domConformation === 'Beta-Sheet') {
+      return (i % 10 < 6) ? 'sheet' : 'coil';
     }
+    return (i % 8 < 3) ? 'helix' : (i % 8 < 6) ? 'sheet' : 'coil';
   };
-
-  if (!isAvailable) {
-    return (
-      <div className={`relative w-full rounded-2xl border border-[#DDD6FE] bg-[#FAF5FF] flex flex-col items-center justify-center p-8 text-center min-h-[450px] shadow-[0_4px_24px_rgba(139,92,246,0.05)] ${className}`}>
-        <div className="w-14 h-14 rounded-2xl bg-[#FFF7ED] border border-[#FED7AA] flex items-center justify-center text-[#EA580C] mb-4 shadow-2xs">
-          <AlertCircle className="w-7 h-7" />
-        </div>
-        <h4 className="text-base font-bold font-mono text-[#0F172A] mb-1">Structure model unavailable for this sequence</h4>
-        <p className="text-xs text-[#64748B] font-mono max-w-sm">
-          Polypeptide sequence length must be at least 4 residues for 3D conformational backbone modeling. Amino acid compositional analysis remains fully computed.
-        </p>
-      </div>
-    );
-  }
 
   return (
     <div
-      className={`relative w-full rounded-2xl overflow-hidden border border-[#DDD6FE] bg-[#FAF5FF] flex flex-col shadow-[0_4px_24px_rgba(139,92,246,0.06)] ${
-        isFullscreen ? 'fixed inset-0 z-50 rounded-none h-screen' : 'h-[500px]'
+      ref={containerRef}
+      style={{ minHeight: '480px' }}
+      className={`relative w-full rounded-2xl overflow-hidden border border-[#DDD6FE] bg-[#FAF5FF] flex flex-col shadow-xs ${
+        isFullscreen ? 'fixed inset-0 z-50 rounded-none h-screen min-h-screen' : 'h-[520px]'
       } ${className}`}
     >
-      <div ref={containerRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
+      {/* Header */}
+      <div className="bg-white/95 backdrop-blur-md border-b border-[#DDD6FE] px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5 z-20 font-mono text-xs shadow-2xs">
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 bg-[#EDE9FE] text-[#7C3AED] px-2.5 py-1 rounded-lg border border-[#DDD6FE] font-semibold text-[11px]">
+            <Compass className="w-3.5 h-3.5 text-[#7C3AED]" />
+            <span>Protein Domain & Secondary Structure Schematic</span>
+          </div>
 
-      {/* Top Floating Control Bar */}
-      <div className="absolute top-4 left-4 right-4 flex items-center justify-between pointer-events-none">
-        <div className="pointer-events-auto flex items-center gap-2 bg-white/95 backdrop-blur-md px-3.5 py-1.5 rounded-xl border border-[#DDD6FE] text-xs text-[#0F172A] shadow-md font-mono">
-          {structureState === 'known' ? (
-            <span className="flex items-center gap-1.5 text-[#15803D] font-bold">
-              <ShieldCheck className="w-4 h-4" /> Known Structure
+          <span className="text-[#CBD5E1]">|</span>
+          <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-sans font-medium" title="Linear secondary structure diagram. Real 3D coordinates available in 3D Structure Explorer tab.">
+            Idealized Secondary Schematic (Non-Atomic)
+          </span>
+
+          {hasRendered && renderedCount > 0 ? (
+            <span className="flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded text-[11px] font-bold">
+              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+              <span>{renderedCount} residues rendered (pos {startPosition}–{startPosition + renderedCount - 1} of {effectiveTotalLength})</span>
             </span>
           ) : (
-            <span className="flex items-center gap-1.5 text-[#7C3AED] font-bold">
-              <Sparkles className="w-4 h-4" /> Predicted Structure
-            </span>
+            <span className="text-slate-400 text-[11px]">No protein sequence data</span>
           )}
-          <span className="text-[#CBD5E1]">|</span>
-          <span className="font-mono text-[11px] text-[#64748B]">
-            {displaySeq.length} aa ({proteinAnalysis.molecularWeightKDa} kDa)
-          </span>
         </div>
 
-        {/* View Controls */}
-        <div className="pointer-events-auto flex items-center gap-1.5 bg-white/95 backdrop-blur-md p-1.5 rounded-xl border border-[#DDD6FE] shadow-md">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {/* Zoom controls */}
+          <div className="flex items-center gap-1 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg p-0.5">
+            <button
+              type="button"
+              onClick={() => setZoomLevel(prev => Math.min(2.5, prev + 0.25))}
+              className="p-1 rounded text-slate-600 hover:text-[#0F172A] hover:bg-slate-100 transition-colors cursor-pointer"
+            >
+              <ZoomIn className="w-3.5 h-3.5" />
+            </button>
+            <span className="text-[10px] text-slate-500 px-1 font-mono min-w-[32px] text-center">
+              {Math.round(zoomLevel * 100)}%
+            </span>
+            <button
+              type="button"
+              onClick={() => setZoomLevel(prev => Math.max(0.5, prev - 0.25))}
+              className="p-1 rounded text-slate-600 hover:text-[#0F172A] hover:bg-slate-100 transition-colors cursor-pointer"
+            >
+              <ZoomOut className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setZoomLevel(1)}
+              className="px-1.5 py-0.5 rounded text-[10px] text-slate-600 hover:text-[#0F172A] hover:bg-slate-100 transition-colors cursor-pointer font-sans"
+            >
+              1x
+            </button>
+          </div>
+
           <button
-            onClick={() => setAutoRotate(!autoRotate)}
-            className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-              autoRotate ? 'bg-[#F3E8FF] text-[#7C3AED]' : 'text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9]'
-            }`}
-            title={autoRotate ? 'Pause Rotation' : 'Auto Rotate'}
-          >
-            {autoRotate ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-          </button>
-          <button
-            onClick={() => handleZoom('in')}
-            className="p-1.5 rounded-lg text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors cursor-pointer"
-            title="Zoom In"
-          >
-            <ZoomIn className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => handleZoom('out')}
-            className="p-1.5 rounded-lg text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors cursor-pointer"
-            title="Zoom Out"
-          >
-            <ZoomOut className="w-4 h-4" />
-          </button>
-          <button
-            onClick={handleReset}
-            className="p-1.5 rounded-lg text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors cursor-pointer"
-            title="Reset Orientation"
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
-          <button
+            type="button"
             onClick={() => setIsFullscreen(!isFullscreen)}
-            className="p-1.5 rounded-lg text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors cursor-pointer"
-            title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+            className="p-1.5 rounded-lg border border-[#CBD5E1] bg-white text-slate-600 hover:text-[#0F172A] hover:bg-slate-50 transition-colors cursor-pointer shadow-2xs"
           >
-            {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
           </button>
         </div>
       </div>
 
-      {/* Bottom Floating Render Mode & Color Schemes */}
-      <div className="absolute bottom-4 left-4 right-4 flex flex-wrap items-center justify-between gap-2 pointer-events-none text-xs">
-        {/* Render Modes: Ribbon, Ball & Stick, Surface, Wireframe */}
-        <div className="pointer-events-auto flex items-center gap-1 bg-white/95 backdrop-blur-md p-1 rounded-xl border border-[#DDD6FE] shadow-md text-[11px] font-mono text-[#334155]">
-          <button
-            onClick={() => setRenderMode('ribbon')}
-            className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
-              renderMode === 'ribbon' ? 'bg-[#8B5CF6] text-white font-bold shadow-xs' : 'text-[#64748B] hover:text-[#0F172A] hover:bg-[#F5F3FF]'
-            }`}
+      {/* Viewport */}
+      <div className="relative flex-1 w-full h-full overflow-hidden flex flex-col">
+        {seqLength === 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-500 font-mono text-xs">
+            <Info className="w-8 h-8 text-purple-500 mb-2" />
+            <p className="font-semibold text-slate-800">No Protein Sequence Available</p>
+          </div>
+        ) : (
+          <div
+            ref={scrollContainerRef}
+            onScroll={(e) => setScrollLeft(e.currentTarget.scrollLeft)}
+            className="flex-1 w-full h-full overflow-x-auto overflow-y-hidden select-none cursor-grab active:cursor-grabbing bg-[#F8FAFC]"
           >
-            Cartoon / Ribbon
-          </button>
-          <button
-            onClick={() => setRenderMode('ball_stick')}
-            className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
-              renderMode === 'ball_stick' ? 'bg-[#8B5CF6] text-white font-bold shadow-xs' : 'text-[#64748B] hover:text-[#0F172A] hover:bg-[#F5F3FF]'
-            }`}
-          >
-            Ball & Stick
-          </button>
-          <button
-            onClick={() => setRenderMode('surface')}
-            className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
-              renderMode === 'surface' ? 'bg-[#8B5CF6] text-white font-bold shadow-xs' : 'text-[#64748B] hover:text-[#0F172A] hover:bg-[#F5F3FF]'
-            }`}
-          >
-            Surface
-          </button>
-          <button
-            onClick={() => setRenderMode('wireframe')}
-            className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
-              renderMode === 'wireframe' ? 'bg-[#8B5CF6] text-white font-bold shadow-xs' : 'text-[#64748B] hover:text-[#0F172A] hover:bg-[#F5F3FF]'
-            }`}
-          >
-            Wireframe
-          </button>
+            <div style={{ width: `${totalDiagramWidth}px`, height: '100%', minHeight: `${TRACK_HEIGHT}px` }} className="relative py-4 px-6">
+              <svg width={totalDiagramWidth} height={TRACK_HEIGHT} className="overflow-visible">
+                {/* Termini labels */}
+                <g className="font-mono text-xs">
+                  <rect x="10" y="45" width="40" height="22" rx="4" fill="#7C3AED" />
+                  <text x="30" y="60" textAnchor="middle" fill="#FFFFFF" fontSize="11" fontWeight="bold">N-term</text>
+                  <text x="60" y="60" fill="#6D28D9" fontSize="10" fontWeight="bold">Polypeptide Chain (5'→3' Translation)</text>
+
+                  {/* Backbone trace */}
+                  <line x1="60" y1="120" x2={totalDiagramWidth - 50} y2="120" stroke="#7C3AED" strokeWidth="3" strokeLinecap="round" />
+
+                  <rect x={totalDiagramWidth - 50} y="45" width="40" height="22" rx="4" fill="#7C3AED" />
+                  <text x={totalDiagramWidth - 30} y="60" textAnchor="middle" fill="#FFFFFF" fontSize="11" fontWeight="bold">C-term</text>
+                </g>
+
+                {/* Residue Tiles & Tracks */}
+                {cleanSeq.split('').map((aa, idx) => {
+                  if (idx < visibleStartIndex - 5 || idx > visibleEndIndex + 5) return null;
+                  const info = AA_DETAILS[aa] || { code3: aa, name: 'Amino Acid', type: 'polar' as const, color: '#64748B' };
+                  const x = 70 + idx * scaledBaseWidth;
+                  const absPos = startPosition + idx;
+                  const isHovered = hoveredIndex === idx;
+                  const secType = getSecondaryType(idx);
+
+                  return (
+                    <g
+                      key={idx}
+                      onMouseEnter={(e) => {
+                        setHoveredIndex(idx);
+                        const rect = containerRef.current?.getBoundingClientRect();
+                        if (rect) setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+                      }}
+                      onMouseLeave={() => setHoveredIndex(null)}
+                      className="cursor-pointer"
+                    >
+                      {/* Coordinate */}
+                      {(absPos % 10 === 0 || idx === 0 || idx === seqLength - 1) && (
+                        <g>
+                          <line x1={x + scaledBaseWidth / 2} y1="18" x2={x + scaledBaseWidth / 2} y2="28" stroke="#94A3B8" strokeWidth="1.5" />
+                          <text x={x + scaledBaseWidth / 2} y="14" textAnchor="middle" fill="#64748B" fontSize="9" fontFamily="monospace" fontWeight="bold">
+                            {absPos}
+                          </text>
+                        </g>
+                      )}
+
+                      {/* Amino Acid Residue Tile */}
+                      <rect
+                        x={x}
+                        y="95"
+                        width={scaledBaseWidth - 4}
+                        height="48"
+                        rx="6"
+                        fill={info.color}
+                        stroke={isHovered ? '#0F172A' : '#FFFFFF'}
+                        strokeWidth={isHovered ? 2 : 1}
+                      />
+                      <text
+                        x={x + (scaledBaseWidth - 4) / 2}
+                        y="118"
+                        textAnchor="middle"
+                        fill="#FFFFFF"
+                        fontSize={Math.max(11, Math.min(15, scaledBaseWidth * 0.42))}
+                        fontWeight="bold"
+                        fontFamily="monospace"
+                      >
+                        {aa}
+                      </text>
+                      <text
+                        x={x + (scaledBaseWidth - 4) / 2}
+                        y="134"
+                        textAnchor="middle"
+                        fill="#FFFFFF"
+                        fontSize="9"
+                        opacity={0.85}
+                        fontFamily="monospace"
+                      >
+                        {info.code3}
+                      </text>
+
+                      {/* Secondary Structure Track Tile */}
+                      <rect
+                        x={x}
+                        y="160"
+                        width={scaledBaseWidth - 4}
+                        height="18"
+                        rx="4"
+                        fill={secType === 'helix' ? '#D946EF' : secType === 'sheet' ? '#FACC15' : '#06B6D4'}
+                      />
+                      <text
+                        x={x + (scaledBaseWidth - 4) / 2}
+                        y="173"
+                        textAnchor="middle"
+                        fill={secType === 'sheet' ? '#713F12' : '#FFFFFF'}
+                        fontSize="9"
+                        fontWeight="bold"
+                        fontFamily="monospace"
+                      >
+                        {secType === 'helix' ? 'α' : secType === 'sheet' ? 'β' : 'c'}
+                      </text>
+
+                      {/* Hydropathy Bar */}
+                      <rect
+                        x={x}
+                        y="190"
+                        width={scaledBaseWidth - 4}
+                        height="8"
+                        rx="2"
+                        fill={info.type === 'hydrophobic' ? '#F97316' : info.type === 'positive' ? '#3B82F6' : info.type === 'negative' ? '#EF4444' : '#14B8A6'}
+                      />
+                    </g>
+                  );
+                })}
+
+                {/* Track Legend */}
+                <g className="font-mono text-[10px]">
+                  <text x="10" y="240" fill="#64748B" fontWeight="bold">Tracks:</text>
+                  <rect x="70" y="232" width="12" height="10" rx="2" fill="#D946EF" />
+                  <text x="86" y="240" fill="#0F172A">α-Helix</text>
+
+                  <rect x="150" y="232" width="12" height="10" rx="2" fill="#FACC15" />
+                  <text x="166" y="240" fill="#0F172A">β-Sheet</text>
+
+                  <rect x="230" y="232" width="12" height="10" rx="2" fill="#06B6D4" />
+                  <text x="246" y="240" fill="#0F172A">Coil / Loop</text>
+                </g>
+              </svg>
+
+              {hoveredIndex !== null && tooltipPos && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: `${Math.min(containerWidth - 220, Math.max(20, tooltipPos.x + 15))}px`,
+                    top: `${Math.min(TRACK_HEIGHT - 120, Math.max(40, tooltipPos.y - 40))}px`
+                  }}
+                  className="bg-white/95 backdrop-blur-md border border-[#DDD6FE] rounded-xl p-3 shadow-lg pointer-events-none z-30 font-mono text-xs text-[#0F172A] w-52 space-y-1"
+                >
+                  <div className="flex items-center justify-between pb-1 border-b border-[#E2E8F0]">
+                    <span className="font-bold text-[#7C3AED]">Residue {startPosition + hoveredIndex}</span>
+                    <span className="text-[10px] text-slate-500 font-sans">Amino Acid</span>
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] pt-1">
+                    <span className="text-slate-600">Residue:</span>
+                    <span className="font-bold text-purple-600">{cleanSeq[hoveredIndex]} ({AA_DETAILS[cleanSeq[hoveredIndex]]?.name || 'Residue'})</span>
+                  </div>
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-slate-600">3-Letter Code:</span>
+                    <span className="font-bold text-slate-800">{AA_DETAILS[cleanSeq[hoveredIndex]]?.code3 || cleanSeq[hoveredIndex]}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-slate-600">Secondary Structure:</span>
+                    <span className="font-bold text-fuchsia-600">
+                      {getSecondaryType(hoveredIndex) === 'helix' ? 'α-Helix' : getSecondaryType(hoveredIndex) === 'sheet' ? 'β-Strand' : 'Random Coil'}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Legend & 3D Structure Callout */}
+      <div className="bg-white/95 backdrop-blur-md border-t border-[#DDD6FE] px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs font-mono z-20 shadow-2xs">
+        <div className="flex items-center gap-3 flex-wrap text-[11px]">
+          <span className="text-slate-500 font-semibold">Properties:</span>
+          <span className="flex items-center gap-1 text-[#EA580C] font-bold"><span className="w-2.5 h-2.5 rounded-sm bg-[#F97316] inline-block" /> Hydrophobic</span>
+          <span className="flex items-center gap-1 text-[#0891B2] font-bold"><span className="w-2.5 h-2.5 rounded-sm bg-[#06B6D4] inline-block" /> Polar</span>
+          <span className="flex items-center gap-1 text-[#2563EB] font-bold"><span className="w-2.5 h-2.5 rounded-sm bg-[#3B82F6] inline-block" /> Basic (+)</span>
+          <span className="flex items-center gap-1 text-[#DC2626] font-bold"><span className="w-2.5 h-2.5 rounded-sm bg-[#EF4444] inline-block" /> Acidic (-)</span>
         </div>
 
-        {/* Color Palette Selector */}
-        <div className="pointer-events-auto flex items-center gap-1 bg-white/95 backdrop-blur-md p-1 rounded-xl border border-[#DDD6FE] shadow-md text-[11px] font-mono text-[#334155]">
-          <button
-            onClick={() => setColorMode('hydrophobicity')}
-            className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
-              colorMode === 'hydrophobicity' ? 'bg-[#8B5CF6] text-white font-bold shadow-xs' : 'text-[#64748B] hover:text-[#0F172A] hover:bg-[#F5F3FF]'
-            }`}
-          >
-            Hydrophobicity
-          </button>
-          <button
-            onClick={() => setColorMode('secondary')}
-            className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
-              colorMode === 'secondary' ? 'bg-[#8B5CF6] text-white font-bold shadow-xs' : 'text-[#64748B] hover:text-[#0F172A] hover:bg-[#F5F3FF]'
-            }`}
-          >
-            Secondary Struct
-          </button>
-          <button
-            onClick={() => setColorMode('spectrum')}
-            className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
-              colorMode === 'spectrum' ? 'bg-[#8B5CF6] text-white font-bold shadow-xs' : 'text-[#64748B] hover:text-[#0F172A] hover:bg-[#F5F3FF]'
-            }`}
-          >
-            Rainbow (N→C)
-          </button>
+        <div className="flex items-center gap-2 text-[11px] text-slate-500">
+          <Sparkles className="w-3.5 h-3.5 text-purple-500" />
+          <span>For atomic 3D structures (PDB / AlphaFold), switch to 3D Structure Explorer</span>
         </div>
       </div>
     </div>

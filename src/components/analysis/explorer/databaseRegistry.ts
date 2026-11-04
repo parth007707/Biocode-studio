@@ -22,7 +22,7 @@ export const DATABASE_SOURCES: DatabaseSourceMeta[] = [
     supportedFormats: ['FASTA', 'GenBank (flatfile)', 'XML', 'JSON'],
     sampleQueries: [
       { label: 'Human Beta-Globin (HBB)', query: 'NM_000518', description: 'Homo sapiens hemoglobin subunit beta mRNA (626 bp)' },
-      { label: 'Human Chromosome 19', query: 'NC_060941.1', description: 'Homo sapiens isolate CHM13 chromosome 19 (58.6 Mb Genomic DNA)' },
+      { label: 'Human Chromosome 17', query: 'NC_060941.1', description: 'Homo sapiens isolate CHM13 chromosome 17 (84.3 Mb Genomic DNA)' },
       { label: 'SARS-CoV-2 Complete Genome', query: 'NC_045512', description: 'Severe acute respiratory syndrome coronavirus 2 isolate (29.9 kb)' },
       { label: 'Human Tumor Suppressor TP53', query: 'NM_000546', description: 'Homo sapiens tumor protein p53 transcript variant 1 (2.5 kb)' }
     ],

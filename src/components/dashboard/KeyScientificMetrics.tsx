@@ -20,109 +20,100 @@ export const KeyScientificMetrics: React.FC<KeyScientificMetricsProps> = ({
 }) => {
   const isProtein = sequenceType.toUpperCase().includes('PROT') ||
     (!sequenceType.toUpperCase().includes('DNA') && !sequenceType.toUpperCase().includes('RNA'));
+  const unit = isProtein ? 'aa' : 'bp';
 
-  const metrics = [
+  const cards = [
     {
       id: 'mw',
-      label: 'MOLECULAR WEIGHT',
+      title: 'Molecular Weight',
       value: molecularWeightKDa > 0 ? molecularWeightKDa.toFixed(2) : '--',
       unit: 'kDa',
-      subtext: molecularWeightDa > 0 ? `${molecularWeightDa.toLocaleString()} Da` : 'Stoichiometric mass',
+      description: molecularWeightDa > 0 ? `${molecularWeightDa.toLocaleString()} Da mass` : 'Stoichiometric mass',
       icon: Scale,
-      cardBg: 'bg-[#F0F9FF] border-[#BAE6FD] hover:border-[#7DD3FC] shadow-[0_4px_16px_rgba(14,165,233,0.06)]',
-      labelColor: 'text-[#0369A1]',
-      valueColor: 'text-[#0284C7]',
-      unitColor: 'text-[#0EA5E9]',
-      dividerColor: 'border-[#BAE6FD]',
-      iconColor: 'text-[#0284C7]',
-      badgeColor: 'bg-white text-[#0284C7] border border-[#BAE6FD]',
-      accentIndicator: 'bg-[#0EA5E9]'
+      // Sky blue accent
+      topBorder: 'border-t-2 border-t-[#38BDF8]',
+      textColor: 'text-[#38BDF8]',
+      iconColor: 'text-[#38BDF8]',
+      iconBg: 'bg-[#08283D] border border-[#0EA5E9]/40',
+      glow: 'shadow-[0_2px_12px_rgba(56,189,248,0.06)]'
     },
     {
       id: 'pi',
-      label: isProtein ? 'ISOELECTRIC POINT' : 'GC CONTENT',
+      title: isProtein ? 'Isoelectric Point' : 'GC Content',
       value: isProtein 
         ? (typeof isoelectricPoint === 'number' ? isoelectricPoint.toFixed(2) : isoelectricPoint || '5.65')
         : (typeof isoelectricPoint === 'number' ? `${isoelectricPoint.toFixed(1)}` : isoelectricPoint),
       unit: isProtein ? 'pH' : '%',
-      subtext: isProtein ? 'EMBOSS neutral charge' : 'Nucleotide base ratio',
+      description: isProtein ? 'EMBOSS neutral charge' : 'Nucleotide base ratio',
       icon: Zap,
-      cardBg: 'bg-[#FDF2F8] border-[#F9A8D4] hover:border-[#F472B6] shadow-[0_4px_16px_rgba(236,72,153,0.06)]',
-      labelColor: 'text-[#9D174D]',
-      valueColor: 'text-[#DB2777]',
-      unitColor: 'text-[#EC4899]',
-      dividerColor: 'border-[#F9A8D4]',
-      iconColor: 'text-[#EC4899]',
-      badgeColor: 'bg-white text-[#EC4899] border border-[#F9A8D4]',
-      accentIndicator: 'bg-[#EC4899]'
+      // Orange accent
+      topBorder: 'border-t-2 border-t-[#FB923C]',
+      textColor: 'text-[#FB923C]',
+      iconColor: 'text-[#FB923C]',
+      iconBg: 'bg-[#2A1B0C] border border-[#F97316]/40',
+      glow: 'shadow-[0_2px_12px_rgba(251,146,60,0.06)]'
     },
     {
-      id: 'length',
-      label: isProtein ? 'RESIDUES' : 'SEQUENCE LENGTH',
+      id: 'residues',
+      title: 'Residues',
       value: residues > 0 ? residues.toLocaleString() : '--',
-      unit: isProtein ? 'aa' : 'bp',
-      subtext: `${sequenceType.toUpperCase()} reading frame`,
+      unit: unit,
+      description: `${sequenceType.toUpperCase()} sequence length`,
       icon: Dna,
-      cardBg: 'bg-[#F5F3FF] border-[#DDD6FE] hover:border-[#C4B5FD] shadow-[0_4px_16px_rgba(139,92,246,0.06)]',
-      labelColor: 'text-[#6D28D9]',
-      valueColor: 'text-[#7C3AED]',
-      unitColor: 'text-[#8B5CF6]',
-      dividerColor: 'border-[#DDD6FE]',
-      iconColor: 'text-[#8B5CF6]',
-      badgeColor: 'bg-white text-[#8B5CF6] border border-[#DDD6FE]',
-      accentIndicator: 'bg-[#8B5CF6]'
+      // Purple accent
+      topBorder: 'border-t-2 border-t-[#A78BFA]',
+      textColor: 'text-[#A78BFA]',
+      iconColor: 'text-[#A78BFA]',
+      iconBg: 'bg-[#1D1635] border border-[#8B5CF6]/40',
+      glow: 'shadow-[0_2px_12px_rgba(167,139,250,0.06)]'
     },
     {
       id: 'coverage',
-      label: 'COVERAGE',
+      title: 'Analysis Coverage',
       value: coveragePercentage > 0 ? `${coveragePercentage}` : '100',
       unit: '%',
-      subtext: 'Complete sequence analyzed',
+      description: 'Complete sequence analyzed',
       icon: CheckCircle2,
-      cardBg: 'bg-[#F0FDF4] border-[#BBF7D0] hover:border-[#86EFAC] shadow-[0_4px_16px_rgba(34,197,94,0.06)]',
-      labelColor: 'text-[#15803D]',
-      valueColor: 'text-[#16A34A]',
-      unitColor: 'text-[#22C55E]',
-      dividerColor: 'border-[#BBF7D0]',
-      iconColor: 'text-[#16A34A]',
-      badgeColor: 'bg-white text-[#16A34A] border border-[#BBF7D0]',
-      accentIndicator: 'bg-[#22C55E]'
+      // Green accent
+      topBorder: 'border-t-2 border-t-[#4ADE80]',
+      textColor: 'text-[#4ADE80]',
+      iconColor: 'text-[#4ADE80]',
+      iconBg: 'bg-[#166534]/30 border border-[#22C55E]/40',
+      glow: 'shadow-[0_2px_12px_rgba(74,222,128,0.06)]'
     }
   ];
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
-      {metrics.map((m) => {
-        const Icon = m.icon;
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {cards.map((c) => {
+        const Icon = c.icon;
         return (
           <div
-            key={m.id}
-            className={`border rounded-2xl p-5 transition-all hover:scale-[1.01] flex flex-col justify-between ${m.cardBg}`}
+            key={c.id}
+            className={`bg-[#0F223A] hover:bg-[#122A45] border border-[#1E3A5F] ${c.topBorder} rounded-2xl p-4 sm:p-5 transition-all ${c.glow} flex flex-col justify-between`}
           >
-            {/* Top Label & Icon */}
             <div className="flex items-center justify-between gap-2 mb-3">
-              <span className={`text-[11px] font-mono font-bold tracking-wider uppercase ${m.labelColor}`}>
-                {m.label}
+              <span className="text-xs font-medium text-[#94A3B8]">
+                {c.title}
               </span>
-              <div className={`p-1.5 rounded-lg shrink-0 shadow-2xs ${m.badgeColor}`}>
-                <Icon className={`w-4 h-4 ${m.iconColor}`} />
+              <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${c.iconBg}`}>
+                <Icon className={`w-3.5 h-3.5 ${c.iconColor}`} />
               </div>
             </div>
 
-            {/* Large Value & Unit */}
-            <div className="my-1 flex items-baseline gap-1.5 flex-wrap">
-              <span className={`text-2xl sm:text-3xl font-extrabold font-mono tracking-tight ${m.valueColor}`}>
-                {m.value}
-              </span>
-              <span className={`text-xs font-mono font-bold ${m.unitColor}`}>
-                {m.unit}
-              </span>
+            <div className="my-1">
+              <div className="flex items-baseline gap-1.5 font-mono">
+                <span className={`text-2xl sm:text-3xl font-bold tracking-tight ${c.textColor}`}>
+                  {c.value}
+                </span>
+                <span className="text-xs font-semibold text-[#94A3B8]">
+                  {c.unit}
+                </span>
+              </div>
             </div>
 
-            {/* Small Contextual Description */}
-            <div className={`pt-2 mt-2 border-t text-[11px] font-mono flex items-center justify-between ${m.dividerColor} ${m.labelColor}`}>
-              <span className="opacity-90">{m.subtext}</span>
-              <span className={`w-2 h-2 rounded-full ${m.accentIndicator}`} />
+            <div className="pt-2 mt-2 border-t border-[#1E3A5F]/60 text-[11px] text-[#64748B] font-mono truncate">
+              {c.description}
             </div>
           </div>
         );

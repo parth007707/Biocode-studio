@@ -27,7 +27,8 @@ const AA_WEIGHTS: Record<string, number> = {
   E: 129.12, Q: 128.13, G: 57.05,  H: 137.14, I: 113.17,
   L: 113.17, K: 128.18, M: 131.21, F: 147.18, P: 97.12,
   S: 87.08,  T: 101.11, W: 186.21, Y: 163.18, V: 99.13,
-  U: 150.04, O: 237.30
+  U: 150.04, O: 237.30, B: 114.60, Z: 128.62, J: 113.17,
+  X: 110.00, '*': 0
 };
 
 // Kyte-Doolittle hydropathy scale
@@ -126,7 +127,7 @@ export function calculateIsoelectricPoint(seq: string): number {
 }
 
 export function analyzeProteinSequence(seq: string): AminoAcidComposition {
-  const upper = seq.toUpperCase().replace(/[^ACDEFGHIKLMNPQRSTVWY]/g, '');
+  const upper = seq.toUpperCase().replace(/[^A-Z*]/g, '');
   const length = upper.length;
 
   const counts: Record<string, number> = {};
@@ -154,7 +155,7 @@ export function analyzeProteinSequence(seq: string): AminoAcidComposition {
   for (let i = 0; i < length; i++) {
     const aa = upper[i];
     counts[aa] = (counts[aa] || 0) + 1;
-    totalWeight += AA_WEIGHTS[aa] || 110;
+    totalWeight += AA_WEIGHTS[aa] || 110.0;
     totalHydropathy += HYDROPATHY_SCALE[aa] || 0;
     totalHelixScore += HELIX_PROPENSITY[aa] || 1.0;
     totalSheetScore += SHEET_PROPENSITY[aa] || 1.0;
@@ -165,7 +166,7 @@ export function analyzeProteinSequence(seq: string): AminoAcidComposition {
     if (negativeAA.has(aa)) negativeCount++;
   }
 
-  for (const aa of allAA) {
+  for (const aa of Object.keys(counts)) {
     percentages[aa] = length > 0 ? Number(((counts[aa] / length) * 100).toFixed(1)) : 0;
   }
 

@@ -66,6 +66,7 @@ export interface ComparativeAnalysisReport {
   originalLength: number;
   modifiedLength: number;
   lengthDelta: number;
+  isModified: boolean;
   unitLabel: string;
   originalAnalysis: {
     dnaAnalysis?: GCAndORFAnalysisResult | null;
@@ -87,12 +88,14 @@ export interface ComparativeAnalysisReport {
       versionNumber: number;
       label: string;
       sequenceLength: number;
+      sequence?: string;
       createdAt?: string;
     };
     version2: {
       versionNumber: number;
       label: string;
       sequenceLength: number;
+      sequence?: string;
       mutationCount: number;
       parentAnalysisId?: string | null;
       status: string;
@@ -648,12 +651,15 @@ export function generateComparativeAnalysisReport(params: {
     sequenceType
   );
 
+  const isModified = Boolean(originalSequence && modifiedSequence && originalSequence !== modifiedSequence);
+
   return {
     sequenceType,
     pipeline,
     originalLength: origLen,
     modifiedLength: modLen,
     lengthDelta,
+    isModified,
     unitLabel,
     originalAnalysis: {
       dnaAnalysis: origDna,
@@ -675,12 +681,14 @@ export function generateComparativeAnalysisReport(params: {
         versionNumber: 1,
         label: 'Version 1 (Original Sequence)',
         sequenceLength: origLen,
+        sequence: originalSequence,
         createdAt: sourceMetadata?.created_at || 'Original Input'
       },
       version2: {
         versionNumber,
         label: `Version ${versionNumber} (Modified - ${mutations.length} mutations)`,
         sequenceLength: modLen,
+        sequence: modifiedSequence,
         mutationCount: mutations.length,
         parentAnalysisId,
         status: 'Completed',

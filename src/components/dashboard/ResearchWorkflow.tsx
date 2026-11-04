@@ -73,7 +73,7 @@ export const ResearchWorkflow: React.FC<ResearchWorkflowProps> = ({
       id: 'ai' as const,
       name: 'BIOAI INSIGHT',
       status: 'GROUNDED',
-      subtitle: 'Gemini 3.7 Flash',
+      subtitle: 'Gemini 3.1 Flash Lite',
       icon: Sparkles,
       color: 'orange',
       activeColorClass: 'text-orange-400 bg-orange-500/10 border-orange-500/30 hover:bg-orange-500/20',

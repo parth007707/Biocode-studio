@@ -1,26 +1,19 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  Dna, 
-  Activity, 
-  Database, 
-  AlertCircle,
   Loader2,
-  RefreshCw,
-  Sparkles
+  Terminal,
+  CheckCircle2,
 } from 'lucide-react';
-import { NavItem, SystemStats, AnalysisRecord, SchemaHealthStatus, SequenceRecord, AiContextData, TargetSequence } from '../../types';
+import { NavItem, AnalysisRecord, SchemaHealthStatus, SequenceRecord, AiContextData, TargetSequence } from '../../types';
 import { bioService } from '../../services/bioService';
 import { isSupabaseConfigured } from '../../lib/supabase/client';
 import { SqlMigrationModal } from '../database/SqlMigrationModal';
+import { useBioSequence } from '../../context/BioSequenceContext';
 
-import { ResearchTargetCard } from './ResearchTargetCard';
-import { KeyScientificMetrics } from './KeyScientificMetrics';
-import { ScientificAnalytics } from './ScientificAnalytics';
-import { ResearchPipelineWorkflow } from './ResearchPipelineWorkflow';
-import { ResearchSystemStatus } from './ResearchSystemStatus';
-import { ResearchReportCard } from './ResearchReportCard';
-import { SequenceMap } from './SequenceMap';
-import { BioAiQuickAnalysis } from './BioAiQuickAnalysis';
+import { WorkspaceHeroSection } from './WorkspaceHeroSection';
+import { QuickResearchActions } from './QuickResearchActions';
+import { ActiveResearchWorkspace } from './ActiveResearchWorkspace';
+import { RecentResearchActivity } from './RecentResearchActivity';
 
 interface DashboardViewProps {
   setActiveTab: (tab: NavItem) => void;
@@ -41,22 +34,13 @@ interface DashboardViewProps {
 export const DashboardView: React.FC<DashboardViewProps> = ({ 
   setActiveTab, 
   user, 
-  onOpenAuth, 
   onSelectAnalysis,
   onOpenWorkbench,
   onOpenAiWithContext
 }) => {
-  const [stats, setStats] = useState<SystemStats>({
-    totalAnalyses: 0,
-    activeProjects: 0,
-    sequencesProcessed: 0,
-    systemStatus: 'Unconfigured',
-    persistenceStorage: 'local_fallback'
-  });
   const [recentAnalyses, setRecentAnalyses] = useState<AnalysisRecord[]>([]);
   const [availableSequences, setAvailableSequences] = useState<SequenceRecord[]>([]);
   const [selectedSequence, setSelectedSequence] = useState<SequenceRecord | null>(null);
-  const [sequenceVersions, setSequenceVersions] = useState<any[]>([]);
   const [schemaStatus, setSchemaStatus] = useState<SchemaHealthStatus | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [isMigrationModalOpen, setIsMigrationModalOpen] = useState<boolean>(false);
@@ -72,38 +56,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const loadDashboardData = async (isMounted: boolean = true) => {
     setLoading(true);
     try {
-      const [fetchedStats, analyses, health, sequences] = await Promise.all([
-        bioService.getSystemStats(user?.id),
+      const [analyses, health, sequences] = await Promise.all([
         bioService.getAnalyses(user?.id),
         bioService.checkSchemaHealth(true),
         bioService.getSequenceRecords(user?.id)
       ]);
 
       if (isMounted) {
-        setStats(fetchedStats);
         setRecentAnalyses(analyses);
         setSchemaStatus(health);
         setAvailableSequences(sequences);
 
-        // Intelligently select active research target:
-        // Prefer rich protein sequence (e.g. NP_000537 p53, or AAB08058 GFP, or first loaded)
         if (sequences.length > 0) {
           const preferred = sequences.find(s => s.accession === 'NP_000537') 
             || sequences.find(s => s.sequence_type?.toLowerCase().includes('prot'))
             || sequences[0];
           setSelectedSequence(preferred);
-
-          // Fetch versions / mutation history for this sequence
-          if (preferred.id) {
-            try {
-              const versions = await bioService.getSequenceVersions(preferred.id);
-              if (isMounted) {
-                setSequenceVersions(versions);
-              }
-            } catch (vErr) {
-              console.warn('[Dashboard] Could not fetch versions:', vErr);
-            }
-          }
         }
       }
     } catch (err) {
@@ -115,21 +83,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }
   };
 
-  // When user switches sequence target
-  const handleSelectSequence = async (accession: string) => {
-    const found = availableSequences.find(s => s.accession === accession);
-    if (!found) return;
+  const {
+    accession: centralAccession,
+    definition: centralDefinition,
+    organism: centralOrganism,
+    sequence: centralSequence,
+    sequenceType: centralSequenceType,
+    length: centralLength,
+    loadSequence: centralLoadSequence
+  } = useBioSequence();
 
-    setSelectedSequence(found);
-    if (found.id) {
-      try {
-        const versions = await bioService.getSequenceVersions(found.id);
-        setSequenceVersions(versions);
-      } catch (err) {
-        setSequenceVersions([]);
-      }
-    } else {
-      setSequenceVersions([]);
+  const handleSelectSequence = (seq: SequenceRecord) => {
+    setSelectedSequence(seq);
+    if (seq.sequence) {
+      centralLoadSequence(seq.sequence, {
+        accession: seq.accession,
+        definition: seq.definition || '',
+        organism: seq.organism || '',
+        sequenceType: seq.sequence_type || 'PROTEIN',
+        id: seq.id
+      });
     }
   };
 
@@ -142,112 +115,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     ) || null;
   }, [selectedSequence, recentAnalyses]);
 
-  // Extract real mutations from versions or analysis results
-  const activeMutations = useMemo(() => {
-    const list: Array<{ position: number; original?: string; modified?: string; description?: string }> = [];
-
-    // Check version changes
-    if (sequenceVersions.length > 0) {
-      for (const ver of sequenceVersions) {
-        if (ver.changes && Array.isArray(ver.changes)) {
-          for (const c of ver.changes) {
-            if (c.position) {
-              list.push({
-                position: c.position,
-                original: c.original,
-                modified: c.modified,
-                description: c.description || `Substitution at pos ${c.position}: ${c.original} → ${c.modified}`
-              });
-            }
-          }
-        }
-      }
-    }
-
-    // Also check analysis results
-    if (activeAnalysis?.results?.mutations && Array.isArray(activeAnalysis.results.mutations)) {
-      for (const m of activeAnalysis.results.mutations) {
-        if (m.position && !list.some(item => item.position === m.position)) {
-          list.push({
-            position: m.position,
-            original: m.original,
-            modified: m.modified,
-            description: m.description
-          });
-        }
-      }
-    }
-
-    return list;
-  }, [sequenceVersions, activeAnalysis]);
-
-  // Target biological parameters
+  // Target biological parameters synchronized with Central BioSequence Store
   const currentTarget: TargetSequence = useMemo(() => {
-    if (selectedSequence) {
-      return {
-        accession: selectedSequence.accession || 'NP_000537',
-        definition: selectedSequence.definition || 'Cellular biological target sequence',
-        organism: selectedSequence.organism || 'Homo sapiens',
-        sequenceType: selectedSequence.sequence_type || 'Protein',
-        totalLength: selectedSequence.total_length || selectedSequence.sequence?.length || 361,
-        sequence: selectedSequence.sequence || '',
-        id: selectedSequence.id
-      };
-    }
     return {
-      accession: 'NP_000537',
-      definition: 'cellular tumor antigen p53 isoform a [Homo sapiens]',
-      organism: 'Homo sapiens',
-      sequenceType: 'Protein',
-      totalLength: 361,
-      sequence: 'MEEPQSDPSVEPPLSQETFSDLWKLLPENNVLSPLPSQAMDDLMLSPDDIEQWFTEDPGPDEAPRMPEAAPPVAPAPAAPTPAAPAPAPSWPLSSSVPSQKTYQGSYGFRLGFLHSGTAKSVTCTYSPALNKMFCQLAKTCPVQLWVDSTPPPGTRVRAMAIYKQSQHMTEVVRRCPHHERCSDSDGLAPPQHLIRVEGNLRVEYLDDRNTFRHSVVVPYEPPEVGSDCTTIHYNYMCNSSCMGGMNRRPILTIITLEDSSGNLLGRNSFEVRVCACPGRDRRTEEENLRKKGEPHHELPPGSTKRALPNNTSSSPQPKKKPLDGEYFTLQIRGRERFEMFRELNEALELKDAQAGKEPGGSRAHSSHLKSKKGQSTSRHKKLMFKTEGPDSD',
-      id: undefined
+      accession: centralAccession || selectedSequence?.accession || 'NP_000537',
+      definition: centralDefinition || selectedSequence?.definition || 'Cellular biological target sequence',
+      organism: centralOrganism || selectedSequence?.organism || 'Homo sapiens',
+      sequenceType: centralSequenceType || selectedSequence?.sequence_type || 'Protein',
+      totalLength: centralLength || selectedSequence?.total_length || 393,
+      sequence: centralSequence || selectedSequence?.sequence || 'MEEPQSDPSVEPPLSQETFSDLWKLLPENNVLSPLPSQAMDDLMLSPDDIEQWFTEDPGPDEAPRMPEAAPPVAPAPAAPTPAAPAPAPSWPLSSSVPSQKTYQGSYGFRLGFLHSGTAKSVTCTYSPALNKMFCQLAKTCPVQLWVDSTPPPGTRVRAMAIYKQSQHMTEVVRRCPHHERCSDSDGLAPPQHLIRVEGNLRVEYLDDRNTFRHSVVVPYEPPEVGSDCTTIHYNYMCNSSCMGGMNRRPILTIITLEDSSGNLLGRNSFEVRVCACPGRDRRTEEENLRKKGEPHHELPPGSTKRALPNNTSSSPQPKKKPLDGEYFTLQIRGRERFEMFRELNEALELKDAQAGKEPGGSRAHSSHLKSKKGQSTSRHKKLMFKTEGPDSD',
+      id: selectedSequence?.id || 'central_target'
     };
-  }, [selectedSequence]);
-
-  const isProtein = currentTarget.sequenceType.toUpperCase().includes('PROT') ||
-    (!currentTarget.sequenceType.toUpperCase().includes('DNA') && !currentTarget.sequenceType.toUpperCase().includes('RNA'));
-
-  // Accurate biological calculations for the active sequence
-  const biophysicalMetrics = useMemo(() => {
-    const seq = currentTarget.sequence;
-    const len = currentTarget.totalLength || seq.length || 1;
-
-    if (isProtein && seq) {
-      const AA_WEIGHTS: Record<string, number> = {
-        A: 71.08, R: 156.20, N: 114.11, D: 115.09, C: 103.14,
-        E: 129.12, Q: 128.13, G: 57.05, H: 137.14, I: 113.17,
-        L: 113.17, K: 128.18, M: 131.21, F: 147.18, P: 97.12,
-        S: 87.08, T: 101.11, W: 186.21, Y: 163.18, V: 99.13
-      };
-      let mwDa = 18.015; // water molecule
-      const clean = seq.toUpperCase().replace(/[^A-Z]/g, '');
-      for (let i = 0; i < clean.length; i++) {
-        mwDa += AA_WEIGHTS[clean[i]] || 110.0;
-      }
-      const mwKDa = Number((mwDa / 1000).toFixed(2));
-      const pI = activeAnalysis?.results?.isoelectricPoint || (currentTarget.accession.includes('000537') ? 5.65 : 6.32);
-      return {
-        molecularWeightKDa: activeAnalysis?.results?.molecularWeightKDa || mwKDa,
-        molecularWeightDa: Math.round(activeAnalysis?.results?.molecularWeightDa || mwDa),
-        isoelectricPoint: pI,
-        residues: len,
-        coveragePercentage: 100
-      };
-    } else {
-      const mwDa = (len * 330) + 79;
-      return {
-        molecularWeightKDa: Number((mwDa / 1000).toFixed(2)),
-        molecularWeightDa: mwDa,
-        isoelectricPoint: activeAnalysis?.results?.gcContent ?? 48.5,
-        residues: len,
-        coveragePercentage: 100
-      };
-    }
-  }, [currentTarget, isProtein, activeAnalysis]);
-
-  const hasSchemaIssue = schemaStatus?.missingTables && schemaStatus.missingTables.length > 0;
-  const isSupabaseConnected = schemaStatus?.state === 'CONNECTED';
+  }, [centralAccession, centralDefinition, centralOrganism, centralSequenceType, centralLength, centralSequence, selectedSequence]);
 
   // Navigation handlers
   const handleLaunchWorkbench = (pipeline?: string) => {
@@ -270,25 +149,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }
   };
 
-  const handleLaunchStructure = () => {
-    handleLaunchWorkbench('Structural Assessment');
-  };
-
-  const handleLaunchVariants = () => {
-    handleLaunchWorkbench('Variant Analysis');
-  };
-
-  const handleOpenFullAi = (initialPrompt?: string, context?: AiContextData) => {
-    if (onOpenAiWithContext && context) {
-      onOpenAiWithContext(context);
-    } else {
-      setActiveTab('ai-assistant');
-    }
-  };
-
-  const handleWorkflowNavigate = (stage: 'sequence' | 'analysis' | 'structure' | 'variants' | 'ai') => {
-    if (stage === 'ai') {
-      handleOpenFullAi(undefined, {
+  const handleOpenFullAi = () => {
+    if (onOpenAiWithContext) {
+      onOpenAiWithContext({
         type: 'sequence',
         sequenceId: currentTarget.accession,
         accession: currentTarget.accession,
@@ -297,6 +160,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         sequenceData: currentTarget.sequence,
         sequenceLength: currentTarget.totalLength
       });
+    } else {
+      setActiveTab('ai-assistant');
+    }
+  };
+
+  const handleWorkflowNavigate = (stage: 'sequence' | 'analysis' | 'structure' | 'variants' | 'ai') => {
+    if (stage === 'ai') {
+      handleOpenFullAi();
       return;
     }
 
@@ -310,184 +181,124 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     handleLaunchWorkbench(pipelineMap[stage]);
   };
 
-  // Convert availableSequences to TargetSequence format for dropdown with deduplication
-  const formattedAvailableSequences: TargetSequence[] = useMemo(() => {
-    if (availableSequences.length === 0) {
-      return [currentTarget];
-    }
-
-    // Deduplicate by accession so we don't have multiple options with the same accession
-    const seenAccessions = new Set<string>();
-    const uniqueSeqs: TargetSequence[] = [];
-
-    for (const s of availableSequences) {
-      const acc = s.accession || 'NP_000537';
-      if (!seenAccessions.has(acc)) {
-        seenAccessions.add(acc);
-        uniqueSeqs.push({
-          accession: acc,
-          definition: s.definition || '',
-          organism: s.organism || 'Homo sapiens',
-          sequenceType: s.sequence_type || 'Protein',
-          totalLength: s.total_length || s.sequence?.length || 0,
-          sequence: s.sequence || '',
-          id: s.id
-        });
-      }
-    }
-
-    // Ensure currentTarget is present in the list if not already included
-    if (currentTarget.accession && !seenAccessions.has(currentTarget.accession)) {
-      uniqueSeqs.unshift(currentTarget);
-    }
-
-    return uniqueSeqs;
-  }, [availableSequences, currentTarget]);
-
-  if (loading && !selectedSequence) {
+  if (loading && recentAnalyses.length === 0) {
     return (
-      <div className="p-8 max-w-[1500px] mx-auto min-h-[600px] flex flex-col items-center justify-center space-y-4">
-        <div className="w-12 h-12 rounded-2xl bg-[rgba(56,189,248,0.12)] border border-[#38BDF8]/30 flex items-center justify-center text-[#0284C7] shadow-xs">
-          <Loader2 className="w-6 h-6 animate-spin text-[#0284C7]" />
+      <div className="min-h-[500px] flex flex-col items-center justify-center space-y-4 bg-scientific-grid">
+        <div className="w-12 h-12 rounded-2xl bg-white border border-sky-200 flex items-center justify-center text-sky-600 shadow-sm">
+          <Loader2 className="w-6 h-6 animate-spin text-sky-600" />
         </div>
-        <div className="text-center">
-          <h3 className="text-sm font-bold font-mono text-[#0F172A] tracking-wider uppercase">
-            BIOCODE RESEARCH STATION
-          </h3>
-          <p className="text-xs text-[#64748B] font-mono mt-1">
-            Loading biological targets, schema state, and computational pipelines...
-          </p>
+        <div className="text-center space-y-1">
+          <p className="text-sm font-mono font-bold text-slate-800">Loading Research Workspace...</p>
+          <p className="text-xs text-slate-500 font-mono">Synchronizing biological targets &amp; active analyses</p>
         </div>
       </div>
     );
   }
 
+  const isConnected = schemaStatus?.connected ?? isSupabaseConfigured;
+
   return (
-    <div className="p-4 sm:p-6 lg:p-8 space-y-6 sm:space-y-8 max-w-[1500px] mx-auto min-w-0">
-      {/* Supabase Schema or Configuration Notice (Preserved faithfully) */}
-      {!isSupabaseConfigured ? (
-        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
-          <div className="flex items-center gap-2.5">
-            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-            <span>Supabase environment variables are not configured yet. Station is operating in local fallback mode.</span>
-          </div>
-          <button
-            onClick={onOpenAuth}
-            className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs transition-all shrink-0 cursor-pointer font-mono"
-          >
-            Configure Auth
-          </button>
-        </div>
-      ) : hasSchemaIssue ? (
-        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
-          <div className="flex items-center gap-2.5">
-            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-            <div>
-              <span className="font-bold text-amber-800">Supabase Schema Notice:</span> Table(s) <code className="font-mono bg-amber-100 border border-amber-200 px-1 py-0.5 rounded text-amber-900">{schemaStatus?.missingTables.join(', ')}</code> pending schema cache reload.
+    <div className="min-h-full bg-scientific-grid text-slate-900">
+      {/* Maximum 1400px Centered Content Container */}
+      <div className="max-w-[1400px] mx-auto px-4 sm:px-6 md:px-8 py-6 space-y-7">
+        
+        {/* ======================================================== */}
+        {/* 1. TOP HEADER / STATUS BAR                               */}
+        {/* ======================================================== */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200/80">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-sky-500 animate-pulse shadow-xs shrink-0" />
+              <h1 className="text-2xl sm:text-3xl font-[700] font-display tracking-tight text-slate-900">
+                Bio<span className="text-sky-600">Code Studio</span>
+              </h1>
             </div>
+            <div className="text-xs sm:text-sm font-[600] text-sky-700 font-sans tracking-wide">
+              Research Command Center
+            </div>
+            <p className="text-xs sm:text-sm text-slate-600 font-sans font-[400] max-w-2xl">
+              Computational biology workspace for sequence analysis, structure exploration and AI-assisted research.
+            </p>
           </div>
-          <button
-            onClick={() => setIsMigrationModalOpen(true)}
-            className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs transition-all shrink-0 cursor-pointer font-mono"
-          >
-            View SQL Migration
-          </button>
+
+          {/* Compact Top-Right Controls */}
+          <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap font-sans text-xs">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-300 font-[600] shadow-2xs">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+              <span>{isConnected ? 'Supabase Connected' : 'Database Ready'}</span>
+            </span>
+
+            <button
+              type="button"
+              onClick={() => setIsMigrationModalOpen(true)}
+              className="px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 hover:text-slate-900 font-[600] transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs active:scale-[0.99]"
+              title="Open Database Health & Migration Diagnostics"
+            >
+              <Terminal className="w-3.5 h-3.5 text-sky-600" />
+              <span>DB Logs</span>
+            </button>
+
+            <span className="px-3 py-1.5 rounded-lg bg-sky-50 text-sky-800 border border-sky-200 text-[11px] font-[600] hidden md:inline shadow-2xs">
+              Research Session: Active
+            </span>
+          </div>
         </div>
-      ) : null}
 
-      {/* 1. RESEARCH TARGET: ONE large clean research target card (Section 8) */}
-      <ResearchTargetCard
-        currentTarget={currentTarget}
-        availableSequences={formattedAvailableSequences}
-        onSelectSequence={handleSelectSequence}
-        onLaunchWorkbench={() => handleLaunchWorkbench()}
-        onLaunchStructure={handleLaunchStructure}
-        onLaunchVariants={handleLaunchVariants}
-        onLaunchBioAi={() => handleWorkflowNavigate('ai')}
-        isAnalysisComplete={recentAnalyses.length > 0}
-        mutationsCount={activeMutations.length}
-      />
+        {/* ======================================================== */}
+        {/* 2. HERO SECTION — COMPUTATIONAL BIOLOGY WORKSPACE       */}
+        {/* ======================================================== */}
+        <WorkspaceHeroSection
+          onStartAnalysis={() => handleLaunchWorkbench()}
+          onAskBioAi={handleOpenFullAi}
+          onExploreSequence={() => setActiveTab('analysis')}
+          currentTarget={currentTarget}
+        />
 
-      {/* 2. KEY SCIENTIFIC METRICS: 4 primary metric cards (Section 9) */}
-      <KeyScientificMetrics
-        molecularWeightKDa={biophysicalMetrics.molecularWeightKDa}
-        molecularWeightDa={biophysicalMetrics.molecularWeightDa}
-        isoelectricPoint={biophysicalMetrics.isoelectricPoint}
-        residues={biophysicalMetrics.residues}
-        sequenceType={currentTarget.sequenceType}
-        coveragePercentage={biophysicalMetrics.coveragePercentage}
-      />
+        {/* ======================================================== */}
+        {/* 3. ACTIVE RESEARCH TARGET — CLEAN HORIZONTAL SECTION     */}
+        {/* ======================================================== */}
+        <ActiveResearchWorkspace
+          currentTarget={currentTarget}
+          availableSequences={availableSequences}
+          onSelectSequence={handleSelectSequence}
+          onContinueAnalysis={() => handleLaunchWorkbench()}
+          onOpenStructure={() => handleWorkflowNavigate('structure')}
+          onAskBioAi={handleOpenFullAi}
+        />
 
-      {/* 3. SCIENTIFIC ANALYTICS: Analysis Activity, Sequence Composition, Physicochemical Profile (Section 10) */}
-      <ScientificAnalytics
-        sequence={currentTarget.sequence}
-        sequenceType={currentTarget.sequenceType}
-        accession={currentTarget.accession}
-        analyses={recentAnalyses}
-        mutations={activeMutations}
-        onOpenAnalysisWorkbench={() => handleLaunchWorkbench()}
-      />
+        {/* ======================================================== */}
+        {/* 4. QUICK ACTIONS — 4 VISUALLY DISTINCT COMPUTATIONAL ENGINES */}
+        {/* ======================================================== */}
+        <QuickResearchActions
+          onOpenSequenceAnalysis={() => handleLaunchWorkbench()}
+          onOpenStructureExplorer={() => handleWorkflowNavigate('structure')}
+          onOpenBioAi={handleOpenFullAi}
+          onOpenDatabaseExplorer={() => setActiveTab('analysis')}
+        />
 
-      {/* 4. BIOLOGICAL SEQUENCE MAP (Interactive Domain Ribbon) */}
-      <SequenceMap
-        sequence={currentTarget.sequence}
-        accession={currentTarget.accession}
-        sequenceType={currentTarget.sequenceType}
-        totalLength={currentTarget.totalLength}
-        mutations={activeMutations}
-        onOpenAnalysis={() => handleLaunchWorkbench()}
-      />
+        {/* ======================================================== */}
+        {/* 5. RECENT RESEARCH — REAL ACTIVITIES + VELOCITY CHART    */}
+        {/* ======================================================== */}
+        <RecentResearchActivity
+          analyses={recentAnalyses}
+          onSelectAnalysis={(id) => {
+            if (onSelectAnalysis) {
+              onSelectAnalysis(id);
+            } else {
+              setActiveTab('history');
+            }
+          }}
+          onViewAllHistory={() => setActiveTab('history')}
+        />
 
-      {/* 5. RESEARCH PIPELINE: 01 Sequence → 02 Analysis → 03 Structure → 04 Variants → 05 BioAI (Section 11) */}
-      <ResearchPipelineWorkflow
-        onNavigate={handleWorkflowNavigate}
-        hasSequence={Boolean(currentTarget.sequence)}
-        hasAnalysis={recentAnalyses.length > 0}
-        hasStructure={true}
-        variantsCount={activeMutations.length}
-        accession={currentTarget.accession}
-      />
+      </div>
 
-      {/* 6. RESEARCH SYSTEM STATUS: 5 Core Engines in Clean Responsive Grid (Section 12) */}
-      <ResearchSystemStatus
-        isValidated={true}
-        isAnalysisComplete={recentAnalyses.length > 0}
-        schemaStatus={schemaStatus}
-        hasStructure={true}
-        mutationsCount={activeMutations.length}
-      />
-
-      {/* 7. RESEARCH REPORT: Summary, Findings, Export Report (Section 6) */}
-      <ResearchReportCard
-        target={currentTarget}
-        analyses={recentAnalyses}
-        isProtein={isProtein}
-        molecularWeightKDa={biophysicalMetrics.molecularWeightKDa}
-        isoelectricPoint={biophysicalMetrics.isoelectricPoint}
-        mutationsCount={activeMutations.length}
-        onOpenAiAssistant={() => handleWorkflowNavigate('ai')}
-      />
-
-      {/* 8. BIOAI RESEARCH COPILOT (Interactive In-Dashboard Prompting) */}
-      <BioAiQuickAnalysis
-        accession={currentTarget.accession}
-        organism={currentTarget.organism}
-        sequenceType={currentTarget.sequenceType}
-        totalLength={currentTarget.totalLength}
-        sequence={currentTarget.sequence}
-        onOpenFullAi={handleOpenFullAi}
-      />
-
-      {/* SQL Migration Modal (Preserved) */}
+      {/* SQL Migration & Diagnostic Modal */}
       <SqlMigrationModal
         isOpen={isMigrationModalOpen}
-        onClose={() => {
-          setIsMigrationModalOpen(false);
-          loadDashboardData();
-        }}
+        onClose={() => setIsMigrationModalOpen(false)}
         missingTables={schemaStatus?.missingTables}
       />
     </div>
   );
 };
-

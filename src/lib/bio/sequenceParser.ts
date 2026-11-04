@@ -34,9 +34,11 @@ export interface RawParsedData {
   rawInput: string;
   fastaHeader: string | null;
   cleanedSequence: string;
+  unfilteredSequence: string;
   rawSequenceLines: string[];
   hasInvalidChars: boolean;
   invalidChars: string[];
+  charPositionMap: Record<string, number[]>;
 }
 
 export function parseSequence(input: string): RawParsedData {
@@ -45,9 +47,11 @@ export function parseSequence(input: string): RawParsedData {
       rawInput: '',
       fastaHeader: null,
       cleanedSequence: '',
+      unfilteredSequence: '',
       rawSequenceLines: [],
       hasInvalidChars: false,
-      invalidChars: []
+      invalidChars: [],
+      charPositionMap: {}
     };
   }
 
@@ -74,8 +78,18 @@ export function parseSequence(input: string): RawParsedData {
 
   // Identify any non-alphabetic characters (or characters outside standard biological letters and *)
   const invalidCharsFound: string[] = [];
+  const charPositionMap: Record<string, number[]> = {};
+
   for (let i = 0; i < upperCaseRaw.length; i++) {
     const char = upperCaseRaw[i];
+    const pos = i + 1; // 1-based index
+    if (!charPositionMap[char]) {
+      charPositionMap[char] = [];
+    }
+    if (charPositionMap[char].length < 100) {
+      charPositionMap[char].push(pos);
+    }
+
     if (!/[A-Z*]/.test(char)) {
       if (!invalidCharsFound.includes(char)) {
         invalidCharsFound.push(char);
@@ -90,9 +104,11 @@ export function parseSequence(input: string): RawParsedData {
     rawInput: input,
     fastaHeader,
     cleanedSequence,
+    unfilteredSequence: upperCaseRaw,
     rawSequenceLines,
     hasInvalidChars: invalidCharsFound.length > 0,
-    invalidChars: invalidCharsFound
+    invalidChars: invalidCharsFound,
+    charPositionMap
   };
 }
 
@@ -101,6 +117,124 @@ export function parseFasta(input: string): { header: string | null; sequence: st
   return {
     header: parsed.fastaHeader,
     sequence: parsed.cleanedSequence
+  };
+}
+
+export interface FastaValidationResult {
+  header: string;
+  sequence: string;
+  isValid: boolean;
+  type: 'PROTEIN' | 'DNA' | 'RNA' | 'UNKNOWN';
+  length: number;
+  invalidCharacters: string[];
+  errorMessage?: string;
+}
+
+const PROTEIN_ALLOWED_REGEX = /^[ACDEFGHIKLMNPQRSTVWYBZX*]+$/;
+const DNA_ALLOWED_REGEX = /^[ACGTUNRYKMSWBDHV]+$/;
+const RNA_ALLOWED_REGEX = /^[ACGTUNRYKMSWBDHV]+$/;
+
+/**
+ * Strict FASTA parsing and biological validation
+ * - Ignores FASTA header line (>...)
+ * - Removes whitespace and line breaks
+ * - Preserves original residue order
+ * - Validates sequence before display/usage
+ */
+export function parseAndValidateFasta(
+  rawInput: string,
+  expectedType?: 'PROTEIN' | 'DNA' | 'RNA' | 'AUTO'
+): FastaValidationResult {
+  if (!rawInput || typeof rawInput !== 'string') {
+    return {
+      header: '',
+      sequence: '',
+      isValid: false,
+      type: 'UNKNOWN',
+      length: 0,
+      invalidCharacters: [],
+      errorMessage: 'No sequence data provided'
+    };
+  }
+
+  const lines = rawInput.split(/\r?\n/);
+  let header = '';
+  const seqLines: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith('>')) {
+      if (!header) {
+        header = trimmed.substring(1).trim();
+      }
+    } else {
+      seqLines.push(trimmed);
+    }
+  }
+
+  const sequence = seqLines.join('').replace(/\s+/g, '').toUpperCase();
+  if (!sequence) {
+    return {
+      header,
+      sequence: '',
+      isValid: false,
+      type: 'UNKNOWN',
+      length: 0,
+      invalidCharacters: [],
+      errorMessage: 'Empty biological sequence after removing headers and whitespace'
+    };
+  }
+
+  // Detect type if auto
+  let detectedType: 'PROTEIN' | 'DNA' | 'RNA' = 'PROTEIN';
+  if (expectedType && expectedType !== 'AUTO') {
+    detectedType = expectedType;
+  } else {
+    // Check if DNA/RNA
+    const hasU = sequence.includes('U');
+    const hasT = sequence.includes('T');
+    const dnaChars = sequence.replace(/[^ACGTN]/g, '').length;
+    const rnaChars = sequence.replace(/[^ACGUN]/g, '').length;
+    const total = sequence.length;
+
+    if (hasU && !hasT && rnaChars / total > 0.85) {
+      detectedType = 'RNA';
+    } else if (hasT && !hasU && dnaChars / total > 0.85) {
+      detectedType = 'DNA';
+    } else {
+      detectedType = 'PROTEIN';
+    }
+  }
+
+  // Validate according to type
+  const invalidSet = new Set<string>();
+  const allowedRegex =
+    detectedType === 'PROTEIN'
+      ? PROTEIN_ALLOWED_REGEX
+      : detectedType === 'RNA'
+      ? RNA_ALLOWED_REGEX
+      : DNA_ALLOWED_REGEX;
+
+  for (const char of sequence) {
+    if (!allowedRegex.test(char)) {
+      invalidSet.add(char);
+    }
+  }
+
+  const invalidCharacters = Array.from(invalidSet);
+  const isValid = invalidCharacters.length === 0;
+
+  return {
+    header,
+    sequence,
+    isValid,
+    type: detectedType,
+    length: sequence.length,
+    invalidCharacters,
+    errorMessage: isValid
+      ? undefined
+      : `Sequence contains invalid ${detectedType} character(s): ${invalidCharacters.join(', ')}`
   };
 }
 

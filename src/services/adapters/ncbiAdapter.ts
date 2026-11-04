@@ -3,7 +3,7 @@ import { requestManager } from '../requestManager';
 import { formatOrganism } from '../../types';
 
 export interface NCBIQueryParams {
-  db: 'nucleotide' | 'protein' | 'gene' | 'genome' | 'assembly' | 'taxonomy';
+  db: 'nucleotide' | 'nuccore' | 'protein' | 'gene' | 'genome' | 'assembly' | 'taxonomy';
   term: string;
   retmax?: number;
   retstart?: number;
@@ -177,13 +177,29 @@ export function deduceNCBIClassification(
 // Curated metadata registry for instant, high-speed resolution
 const CURATED_NCBI_RECORDS: Record<string, Partial<NCBIDocumentSummary>> = {
   'NC_060941.1': {
-    uid: '2240555321',
+    uid: '2194972897',
     accession: 'NC_060941.1',
     version: '1',
-    title: 'Homo sapiens isolate CHM13 chromosome 19, complete sequence',
-    definition: 'Homo sapiens isolate CHM13 chromosome 19, complete sequence',
+    title: 'Homo sapiens isolate CHM13 chromosome 17, alternate assembly T2T-CHM13v2.0',
+    definition: 'Homo sapiens isolate CHM13 chromosome 17, alternate assembly T2T-CHM13v2.0',
     organism: 'Homo sapiens',
-    length: 58617616,
+    length: 84276897,
+    sourceDb: 'nucleotide',
+    moltype: 'genomic DNA',
+    molecule_type: 'genomic DNA',
+    sequence_type: 'Genomic DNA',
+    strand: 'double-stranded',
+    topology: 'linear',
+    isLargeSequence: true
+  },
+  'NC_060941': {
+    uid: '2194972897',
+    accession: 'NC_060941.1',
+    version: '1',
+    title: 'Homo sapiens isolate CHM13 chromosome 17, alternate assembly T2T-CHM13v2.0',
+    definition: 'Homo sapiens isolate CHM13 chromosome 17, alternate assembly T2T-CHM13v2.0',
+    organism: 'Homo sapiens',
+    length: 84276897,
     sourceDb: 'nucleotide',
     moltype: 'genomic DNA',
     molecule_type: 'genomic DNA',
@@ -591,14 +607,15 @@ class NCBIAdapter {
       case 'ncbi-taxonomy': return 'taxonomy';
       case 'ncbi-nucleotide':
       default:
-        return 'nucleotide';
+        return 'nuccore';
     }
   }
 
   public buildSearchUrl(params: NCBIQueryParams): string {
-    const parsed = parseAndConstructNCBIQuery(params.term, params.db, params.organismFilter);
+    const effectiveDb = (params.db === 'nucleotide' || params.db === 'nuccore' || !params.db) ? 'nuccore' : params.db;
+    const parsed = parseAndConstructNCBIQuery(params.term, effectiveDb, params.organismFilter);
     const url = new URL(`${this.baseUrl}/esearch.fcgi`);
-    url.searchParams.set('db', params.db);
+    url.searchParams.set('db', effectiveDb);
     url.searchParams.set('term', parsed.primaryQuery);
     url.searchParams.set('retmode', 'json');
     url.searchParams.set('retmax', String(params.retmax || 40));
@@ -615,7 +632,8 @@ class NCBIAdapter {
     seqStop?: number
   ): string {
     const url = new URL(`${this.baseUrl}/efetch.fcgi`);
-    url.searchParams.set('db', db);
+    const normalizedDb = (db === 'nucleotide' || db === 'nuccore' || !db) ? 'nuccore' : (db === 'protein' ? 'protein' : db);
+    url.searchParams.set('db', normalizedDb);
     url.searchParams.set('id', id);
     url.searchParams.set('rettype', rettype);
     url.searchParams.set('retmode', 'text');
@@ -625,19 +643,27 @@ class NCBIAdapter {
     if (seqStop !== undefined && seqStop > 0) {
       url.searchParams.set('seq_stop', String(seqStop));
     }
-    if (db === 'nucleotide' || db === 'nuccore' || db === 'gene') {
+    if (normalizedDb === 'nuccore' || db === 'gene') {
       url.searchParams.set('strand', '1');
     }
     return url.toString();
   }
 
   public async getSummary(db: string, idOrAccession: string, signal?: AbortSignal): Promise<NCBIDocumentSummary> {
-    const cacheKey = `${db}:${idOrAccession}`;
-    if (this.summaryCache.has(cacheKey)) {
-      return this.summaryCache.get(cacheKey)!;
+    const normalizedDb = (db === 'nucleotide' || db === 'nuccore' || !db) ? 'nuccore' : (db === 'protein' ? 'protein' : db);
+    const cleanAcc = idOrAccession.split('.')[0].toUpperCase();
+
+    // Check memory cache under both normalized and legacy database keys, versioned and clean
+    const cached = this.summaryCache.get(`${normalizedDb}:${idOrAccession}`) ||
+                   this.summaryCache.get(`nuccore:${idOrAccession}`) ||
+                   this.summaryCache.get(`nucleotide:${idOrAccession}`) ||
+                   this.summaryCache.get(`${normalizedDb}:${cleanAcc}`) ||
+                   this.summaryCache.get(`nuccore:${cleanAcc}`) ||
+                   this.summaryCache.get(`nucleotide:${cleanAcc}`);
+    if (cached) {
+      return cached;
     }
 
-    const cleanAcc = idOrAccession.split('.')[0].toUpperCase();
     const curatedMatch = CURATED_NCBI_RECORDS[idOrAccession] || CURATED_NCBI_RECORDS[cleanAcc];
     if (curatedMatch && curatedMatch.title) {
       const summary: NCBIDocumentSummary = {
@@ -646,7 +672,7 @@ class NCBIAdapter {
         definition: curatedMatch.definition || curatedMatch.title,
         accession: curatedMatch.accession || idOrAccession,
         version: curatedMatch.version,
-        sourceDb: db,
+        sourceDb: normalizedDb,
         organism: curatedMatch.organism,
         length: curatedMatch.length,
         moltype: curatedMatch.moltype,
@@ -657,17 +683,24 @@ class NCBIAdapter {
         feature_annotations: curatedMatch.feature_annotations,
         isLargeSequence: (curatedMatch.length || 0) > 100000
       };
-      this.summaryCache.set(cacheKey, summary);
+      this.summaryCache.set(`${normalizedDb}:${summary.accession}`, summary);
+      this.summaryCache.set(`nuccore:${summary.accession}`, summary);
+      this.summaryCache.set(`nucleotide:${summary.accession}`, summary);
       return summary;
     }
 
     try {
       const url = new URL(`${this.baseUrl}/esummary.fcgi`);
-      url.searchParams.set('db', db);
+      url.searchParams.set('db', normalizedDb);
       url.searchParams.set('id', idOrAccession);
       url.searchParams.set('retmode', 'json');
 
-      const res = await fetch(url.toString(), { signal });
+      let res = await fetch(url.toString(), { signal });
+      if (!res.ok) {
+        // Fallback to backend summary proxy if direct fetch fails
+        res = await fetch(`/api/ncbi/summary?db=${normalizedDb}&id=${encodeURIComponent(idOrAccession)}`, { signal });
+      }
+
       if (res.ok) {
         const data = await res.json();
         const resultObj = data.result || {};
@@ -678,17 +711,19 @@ class NCBIAdapter {
         if (doc) {
           const rawLength = doc.slen ? parseInt(String(doc.slen), 10) : undefined;
           const isLarge = rawLength !== undefined ? rawLength > 100000 : false;
-          const acc = doc.caption || doc.accessionversion || idOrAccession;
-          const title = doc.title || doc.caption || `NCBI ${db.toUpperCase()} Record ${idOrAccession}`;
-          const classification = deduceNCBIClassification(acc, title, db, doc.moltype, doc.biomol);
+          const acc = doc.accessionversion || doc.caption || idOrAccession;
+          const title = doc.title || doc.caption || `NCBI ${normalizedDb.toUpperCase()} Record ${idOrAccession}`;
+          const classification = deduceNCBIClassification(acc, title, normalizedDb, doc.moltype, doc.biomol);
 
           const summary: NCBIDocumentSummary = {
             uid: String(doc.uid || targetId),
             title,
             definition: title,
             accession: acc,
-            version: classification.version || (doc.accessionversion ? doc.accessionversion.split('.')[1] : undefined),
-            sourceDb: db,
+            version: (doc.accessionversion && doc.accessionversion.includes('.'))
+              ? doc.accessionversion.split('.')[1]
+              : (classification.version || (doc.accessionversion ? doc.accessionversion.split('.')[1] : undefined)),
+            sourceDb: normalizedDb,
             organism: (typeof doc.organism === 'object' ? formatOrganism(doc.organism) : doc.organism) || (doc.taxid ? `TaxID: ${doc.taxid}` : undefined),
             length: rawLength,
             createDate: doc.createdate,
@@ -702,7 +737,13 @@ class NCBIAdapter {
             topology: classification.topology,
             isLargeSequence: isLarge
           };
-          this.summaryCache.set(cacheKey, summary);
+          this.summaryCache.set(`${normalizedDb}:${summary.accession}`, summary);
+          this.summaryCache.set(`nuccore:${summary.accession}`, summary);
+          this.summaryCache.set(`nucleotide:${summary.accession}`, summary);
+          if (doc.caption && doc.caption !== summary.accession) {
+            this.summaryCache.set(`${normalizedDb}:${doc.caption}`, summary);
+            this.summaryCache.set(`nuccore:${doc.caption}`, summary);
+          }
           return summary;
         }
       }
@@ -711,14 +752,14 @@ class NCBIAdapter {
     }
 
     // Default safe fallback if summary is not returned
-    const classification = deduceNCBIClassification(idOrAccession, '', db);
+    const classification = deduceNCBIClassification(idOrAccession, '', normalizedDb);
     const fallback: NCBIDocumentSummary = {
       uid: idOrAccession,
       title: `NCBI Record ${idOrAccession}`,
       definition: `NCBI Record ${idOrAccession}`,
       accession: idOrAccession,
       version: classification.version,
-      sourceDb: db,
+      sourceDb: normalizedDb,
       molecule_type: classification.molecule_type,
       sequence_type: classification.sequence_type,
       strand: classification.strand,
@@ -730,11 +771,12 @@ class NCBIAdapter {
 
   public async search(params: NCBIQueryParams): Promise<DatabaseSearchResult<NCBIDocumentSummary>> {
     const startTime = performance.now();
-    const parsed = parseAndConstructNCBIQuery(params.term, params.db, params.organismFilter);
+    const effectiveDb = (params.db === 'nucleotide' || params.db === 'nuccore' || !params.db) ? 'nuccore' : params.db;
+    const parsed = parseAndConstructNCBIQuery(params.term, effectiveDb, params.organismFilter);
 
     const fetchSearchResults = async (queryStr: string, signal?: AbortSignal) => {
       const searchUrl = new URL(`${this.baseUrl}/esearch.fcgi`);
-      searchUrl.searchParams.set('db', params.db);
+      searchUrl.searchParams.set('db', effectiveDb);
       searchUrl.searchParams.set('term', queryStr);
       searchUrl.searchParams.set('retmode', 'json');
       searchUrl.searchParams.set('retmax', String(params.retmax || 40));
@@ -751,7 +793,7 @@ class NCBIAdapter {
       return { idList, count };
     };
 
-    const initialCacheKey = `ncbi-search:${params.db}:${parsed.primaryQuery}:${params.retmax || 40}:${params.retstart || 0}:${params.sort || ''}`;
+    const initialCacheKey = `ncbi-search:${effectiveDb}:${parsed.primaryQuery}:${params.retmax || 40}:${params.retstart || 0}:${params.sort || ''}`;
 
     return requestManager.execute<DatabaseSearchResult<NCBIDocumentSummary>>(
       initialCacheKey,
@@ -805,7 +847,7 @@ class NCBIAdapter {
             status: 'empty',
             items: [],
             executionTimeMs: Math.round(performance.now() - startTime),
-            message: `No records found in NCBI ${params.db.toUpperCase()} for query "${queryUsed}"`
+            message: `No records found in NCBI ${effectiveDb.toUpperCase()} for query "${queryUsed}"`
           };
         }
 
@@ -814,11 +856,15 @@ class NCBIAdapter {
         try {
           const topIds = idList.slice(0, 40);
           const summaryUrl = new URL(`${this.baseUrl}/esummary.fcgi`);
-          summaryUrl.searchParams.set('db', params.db);
+          summaryUrl.searchParams.set('db', effectiveDb);
           summaryUrl.searchParams.set('id', topIds.join(','));
           summaryUrl.searchParams.set('retmode', 'json');
 
-          const summaryRes = await fetch(summaryUrl.toString(), { signal });
+          let summaryRes = await fetch(summaryUrl.toString(), { signal });
+          if (!summaryRes.ok) {
+            summaryRes = await fetch(`/api/ncbi/summary?db=${effectiveDb}&id=${encodeURIComponent(topIds.join(','))}`, { signal });
+          }
+
           if (summaryRes.ok) {
             const summaryData = await summaryRes.json();
             const resultObj = summaryData.result || {};
@@ -826,34 +872,37 @@ class NCBIAdapter {
             const scoredItems = topIds.map((id) => {
               const doc = resultObj[id];
               if (!doc) {
-                const classification = deduceNCBIClassification(id, '', params.db);
+                const classification = deduceNCBIClassification(id, '', effectiveDb);
                 const item: NCBIDocumentSummary = {
                   uid: id,
-                  title: `NCBI ${params.db.toUpperCase()} Record #${id}`,
-                  definition: `NCBI ${params.db.toUpperCase()} Record #${id}`,
+                  title: `NCBI ${effectiveDb.toUpperCase()} Record #${id}`,
+                  definition: `NCBI ${effectiveDb.toUpperCase()} Record #${id}`,
                   accession: id,
                   version: classification.version,
-                  sourceDb: params.db,
+                  sourceDb: effectiveDb,
                   molecule_type: classification.molecule_type,
                   sequence_type: classification.sequence_type,
                   strand: classification.strand,
                   topology: classification.topology
                 };
-                return { item, score: scoreNCBIRecordRelevance(item, parsed, params.db, doc) };
+                return { item, score: scoreNCBIRecordRelevance(item, parsed, effectiveDb, doc) };
               }
 
               const rawLength = doc.slen ? parseInt(String(doc.slen), 10) : undefined;
-              const acc = doc.caption || doc.accessionversion || id;
-              const title = doc.title || doc.caption || `NCBI ${params.db.toUpperCase()} Record #${id}`;
-              const classification = deduceNCBIClassification(acc, title, params.db, doc.moltype, doc.biomol);
+              const acc = doc.accessionversion || doc.caption || id;
+              const title = doc.title || doc.caption || `NCBI ${effectiveDb.toUpperCase()} Record #${id}`;
+              const classification = deduceNCBIClassification(acc, title, effectiveDb, doc.moltype, doc.biomol);
+              const version = (doc.accessionversion && doc.accessionversion.includes('.'))
+                ? doc.accessionversion.split('.')[1]
+                : (classification.version || (doc.accessionversion ? doc.accessionversion.split('.')[1] : undefined));
 
               const item: NCBIDocumentSummary = {
                 uid: id,
                 title,
                 definition: title,
                 accession: acc,
-                version: classification.version || (doc.accessionversion ? doc.accessionversion.split('.')[1] : undefined),
-                sourceDb: params.db,
+                version,
+                sourceDb: effectiveDb,
                 organism: (typeof doc.organism === 'object' ? formatOrganism(doc.organism) : doc.organism) || (doc.taxid ? `TaxID: ${doc.taxid}` : undefined),
                 length: rawLength,
                 createDate: doc.createdate,
@@ -867,9 +916,26 @@ class NCBIAdapter {
                 topology: classification.topology,
                 isLargeSequence: rawLength !== undefined ? rawLength > 100000 : false
               };
-              this.summaryCache.set(`${params.db}:${item.accession}`, item);
+
+              // Cache under all potential accession keys
+              this.summaryCache.set(`${effectiveDb}:${item.accession}`, item);
+              this.summaryCache.set(`nuccore:${item.accession}`, item);
+              this.summaryCache.set(`nucleotide:${item.accession}`, item);
+              if (item.accession.includes('.')) {
+                const baseAcc = item.accession.split('.')[0];
+                this.summaryCache.set(`${effectiveDb}:${baseAcc}`, item);
+                this.summaryCache.set(`nuccore:${baseAcc}`, item);
+                this.summaryCache.set(`nucleotide:${baseAcc}`, item);
+              }
+              if (doc.caption && doc.caption !== item.accession) {
+                this.summaryCache.set(`${effectiveDb}:${doc.caption}`, item);
+                this.summaryCache.set(`nuccore:${doc.caption}`, item);
+                this.summaryCache.set(`nucleotide:${doc.caption}`, item);
+              }
+              this.summaryCache.set(`${effectiveDb}:${id}`, item);
+              this.summaryCache.set(`nuccore:${id}`, item);
               
-              const score = scoreNCBIRecordRelevance(item, parsed, params.db, doc);
+              const score = scoreNCBIRecordRelevance(item, parsed, effectiveDb, doc);
               return { item, score };
             });
 
@@ -880,14 +946,14 @@ class NCBIAdapter {
         } catch {
           // Fallback to basic mapped items
           items = idList.map((id) => {
-            const classification = deduceNCBIClassification(id, '', params.db);
+            const classification = deduceNCBIClassification(id, '', effectiveDb);
             return {
               uid: id,
-              title: `NCBI ${params.db.toUpperCase()} Record #${id}`,
-              definition: `NCBI ${params.db.toUpperCase()} Record #${id}`,
+              title: `NCBI ${effectiveDb.toUpperCase()} Record #${id}`,
+              definition: `NCBI ${effectiveDb.toUpperCase()} Record #${id}`,
               accession: id,
               version: classification.version,
-              sourceDb: params.db,
+              sourceDb: effectiveDb,
               molecule_type: classification.molecule_type,
               sequence_type: classification.sequence_type,
               strand: classification.strand,
@@ -983,90 +1049,139 @@ class NCBIAdapter {
   }
 
   public async fetchFasta(db: string, idOrAccession: string, signal?: AbortSignal): Promise<string> {
-    const cacheKey = `ncbi-fasta:${db}:${idOrAccession}`;
+    const normalizedDb = (db === 'nucleotide' || db === 'nuccore' || !db) ? 'nuccore' : (db === 'protein' ? 'protein' : db);
+    const cacheKey = `ncbi-fasta:${normalizedDb}:${idOrAccession}`;
     return requestManager.execute<string>(
       cacheKey,
       async (sig) => {
-        let primaryDb: 'nucleotide' | 'protein' = db === 'protein' ? 'protein' : 'nucleotide';
+        const isProt = normalizedDb === 'protein' || /^(NP_|XP_|YP_|AP_|WP_|GP_)/i.test(idOrAccession);
+        let primaryDb: 'nuccore' | 'protein' = isProt ? 'protein' : 'nuccore';
         let primaryId = idOrAccession;
 
-        if (db !== 'nucleotide' && db !== 'protein') {
+        const cleanAcc = idOrAccession.split('.')[0].toUpperCase();
+
+        // 1. Check summary cache for large sequence bounds
+        let cachedSummary: any = this.summaryCache.get(`${normalizedDb}:${idOrAccession}`) ||
+                                 this.summaryCache.get(`nuccore:${idOrAccession}`) ||
+                                 this.summaryCache.get(`nucleotide:${idOrAccession}`) ||
+                                 this.summaryCache.get(`${normalizedDb}:${cleanAcc}`) ||
+                                 this.summaryCache.get(`nuccore:${cleanAcc}`) ||
+                                 this.summaryCache.get(`nucleotide:${cleanAcc}`) ||
+                                 CURATED_NCBI_RECORDS[idOrAccession] ||
+                                 CURATED_NCBI_RECORDS[cleanAcc];
+
+        if (!cachedSummary) {
+          try {
+            cachedSummary = await this.getSummary(normalizedDb, idOrAccession, sig);
+          } catch {
+            // non-blocking
+          }
+        }
+
+        if (cachedSummary?.isLargeSequence || (cachedSummary?.length && cachedSummary.length > 250000)) {
+          throw new Error(`NCBI record ${idOrAccession} is a large chromosome/genomic record (${(cachedSummary.length || 0).toLocaleString()} bp). Due to browser memory limits, please select a targeted region (up to 250,000 bp) via "Select Region" to analyze.`);
+        }
+
+        if (db !== 'nucleotide' && db !== 'nuccore' && db !== 'protein') {
           const resolved = await this.resolveSequenceDbAndId(db, idOrAccession, sig);
           if (resolved) {
-            primaryDb = resolved.db;
+            primaryDb = resolved.db === 'nucleotide' ? 'nuccore' : (resolved.db as any);
             primaryId = resolved.id;
           }
         }
 
-        // Attempt 1: primaryDb & primaryId
-        try {
-          const url = this.buildFetchUrl(primaryDb, primaryId, 'fasta');
-          const res = await fetch(url, { signal: sig });
-          if (res.ok) {
-            const text = await res.text();
-            if (text && text.trim().startsWith('>')) {
-              return text;
-            }
-          }
-        } catch {
-          // continue
+        // Build list of candidate (db, id) pairs to query (exact versioned accession prioritized)
+        const candidates: Array<{ db: string; id: string }> = [
+          { db: primaryDb, id: primaryId }
+        ];
+
+        // Check if numeric UID exists in summary cache
+        if (cachedSummary?.uid && cachedSummary.uid !== primaryId && /^\d+$/.test(cachedSummary.uid)) {
+          candidates.push({ db: primaryDb, id: cachedSummary.uid });
         }
 
-        // Attempt 2: Direct nucleotide with original idOrAccession
-        if (primaryDb !== 'nucleotide' || primaryId !== idOrAccession) {
+        // Add versionless variant if versioned
+        if (primaryId.includes('.')) {
+          const versionless = primaryId.split('.')[0];
+          if (!candidates.some(c => c.id === versionless)) {
+            candidates.push({ db: primaryDb, id: versionless });
+          }
+        }
+
+        for (const candidate of candidates) {
+          if (sig?.aborted) throw new DOMException('Aborted', 'AbortError');
           try {
-            const url = this.buildFetchUrl('nucleotide', idOrAccession, 'fasta');
-            const res = await fetch(url, { signal: sig });
+            const url = this.buildFetchUrl(candidate.db, candidate.id, 'fasta');
+            let res = await fetch(url, { signal: sig });
+            if (!res.ok) {
+              res = await fetch(`/api/ncbi/fetch?db=${candidate.db}&id=${encodeURIComponent(candidate.id)}&rettype=fasta`, { signal: sig });
+            }
+
             if (res.ok) {
               const text = await res.text();
-              if (text && text.trim().startsWith('>')) {
-                return text;
-              }
-            }
-          } catch {
-            // continue
-          }
-        }
-
-        // Attempt 3: Direct protein with original idOrAccession
-        if (primaryDb !== 'protein' || primaryId !== idOrAccession) {
-          try {
-            const url = this.buildFetchUrl('protein', idOrAccession, 'fasta');
-            const res = await fetch(url, { signal: sig });
-            if (res.ok) {
-              const text = await res.text();
-              if (text && text.trim().startsWith('>')) {
-                return text;
-              }
-            }
-          } catch {
-            // continue
-          }
-        }
-
-        // Attempt 4: Try elink resolution for gene database
-        if (db === 'nucleotide' || db === 'protein') {
-          const resolved = await this.resolveSequenceDbAndId('gene', idOrAccession, sig);
-          if (resolved) {
-            try {
-              const url = this.buildFetchUrl(resolved.db, resolved.id, 'fasta');
-              const res = await fetch(url, { signal: sig });
-              if (res.ok) {
-                const text = await res.text();
-                if (text && text.trim().startsWith('>')) {
+              if (text && text.trim().startsWith('>') && !text.includes('Error occurred') && !text.includes('<!DOCTYPE')) {
+                const lines = text.split(/\r?\n/).filter(l => !l.startsWith('>'));
+                const seq = lines.join('').replace(/\s+/g, '');
+                if (seq.length > 0) {
                   return text;
                 }
               }
+            }
+          } catch (err: any) {
+            if (err.name === 'AbortError' || sig?.aborted) throw err;
+            try {
+              // Direct proxy fallback on CORS or client network failure
+              const pRes = await fetch(`/api/ncbi/fetch?db=${candidate.db}&id=${encodeURIComponent(candidate.id)}&rettype=fasta`, { signal: sig });
+              if (pRes.ok) {
+                const text = await pRes.text();
+                if (text && text.trim().startsWith('>') && !text.includes('Error occurred') && !text.includes('<!DOCTYPE')) {
+                  const lines = text.split(/\r?\n/).filter(l => !l.startsWith('>'));
+                  const seq = lines.join('').replace(/\s+/g, '');
+                  if (seq.length > 0) {
+                    return text;
+                  }
+                }
+              }
             } catch {
-              // continue
+              // continue to next candidate
             }
           }
         }
 
-        throw new Error(`NCBI sequence FASTA data is not directly accessible for ${db.toUpperCase()} record ${idOrAccession}. Please try selecting a linked nucleotide or protein accession.`);
+        // Attempt elink resolution if gene or other record
+        if (db === 'nucleotide' || db === 'nuccore' || db === 'protein' || db === 'gene') {
+          const resolved = await this.resolveSequenceDbAndId('gene', idOrAccession, sig);
+          if (resolved) {
+            try {
+              const url = this.buildFetchUrl(resolved.db === 'nucleotide' ? 'nuccore' : resolved.db, resolved.id, 'fasta');
+              let res = await fetch(url, { signal: sig });
+              if (!res.ok) {
+                res = await fetch(`/api/ncbi/fetch?db=${resolved.db === 'nucleotide' ? 'nuccore' : resolved.db}&id=${encodeURIComponent(resolved.id)}&rettype=fasta`, { signal: sig });
+              }
+              if (res.ok) {
+                const text = await res.text();
+                if (text && text.trim().startsWith('>') && !text.includes('Error occurred') && !text.includes('<!DOCTYPE')) {
+                  const lines = text.split(/\r?\n/).filter(l => !l.startsWith('>'));
+                  if (lines.join('').replace(/\s+/g, '').length > 0) {
+                    return text;
+                  }
+                }
+              }
+            } catch (err: any) {
+              if (err.name === 'AbortError' || sig?.aborted) throw err;
+            }
+          }
+        }
+
+        if (cachedSummary?.isLargeSequence || (cachedSummary?.length && cachedSummary.length > 250000)) {
+          throw new Error(`NCBI record ${idOrAccession} is a large chromosome/genomic record (${(cachedSummary.length || 0).toLocaleString()} bp). Due to browser memory limits, please select a targeted region (up to 250,000 bp) via "Select Region" to analyze.`);
+        }
+
+        throw new Error(`NCBI sequence FASTA data is not directly accessible for ${normalizedDb.toUpperCase()} record ${idOrAccession}. Please try selecting a linked nucleotide or protein accession.`);
       },
       {
-        priority: 'metadata',
+        priority: 'analysis',
+        timeoutMs: 40_000,
         cacheTtlMs: 300_000,
         signal
       }
@@ -1080,27 +1195,26 @@ class NCBIAdapter {
     stop: number,
     signal?: AbortSignal
   ): Promise<string> {
-    const cacheKey = `ncbi-range-fasta:${db}:${idOrAccession}:${start}:${stop}`;
+    const normalizedDb = (db === 'nucleotide' || db === 'nuccore' || !db) ? 'nuccore' : (db === 'protein' ? 'protein' : db);
+    const cacheKey = `ncbi-range-fasta:${normalizedDb}:${idOrAccession}:${start}:${stop}`;
     return requestManager.execute<string>(
       cacheKey,
       async (sig) => {
-        let primaryDb: 'nucleotide' | 'protein' = db === 'protein' ? 'protein' : 'nucleotide';
+        let primaryDb: 'nuccore' | 'protein' = normalizedDb === 'protein' ? 'protein' : 'nuccore';
         let primaryId = idOrAccession;
 
-        if (db !== 'nucleotide' && db !== 'protein') {
-          const resolved = await this.resolveSequenceDbAndId(db, idOrAccession, sig);
-          if (resolved) {
-            primaryDb = resolved.db;
-            primaryId = resolved.id;
-          }
-        }
+        const cleanAcc = idOrAccession.split('.')[0].toUpperCase();
+        const cachedSummary = this.summaryCache.get(`${normalizedDb}:${idOrAccession}`) ||
+                              this.summaryCache.get(`nuccore:${idOrAccession}`) ||
+                              this.summaryCache.get(`nucleotide:${idOrAccession}`) ||
+                              this.summaryCache.get(`${normalizedDb}:${cleanAcc}`) ||
+                              this.summaryCache.get(`nuccore:${cleanAcc}`);
 
         const candidates: Array<{ db: string; id: string }> = [
           { db: primaryDb, id: primaryId }
         ];
 
         // Include numeric UID from summary cache if present
-        const cachedSummary = this.summaryCache.get(`${db}:${idOrAccession}`) || this.summaryCache.get(`${primaryDb}:${idOrAccession}`);
         if (cachedSummary && cachedSummary.uid && cachedSummary.uid !== primaryId && /^\d+$/.test(cachedSummary.uid)) {
           candidates.push({ db: primaryDb, id: cachedSummary.uid });
         }
@@ -1113,10 +1227,6 @@ class NCBIAdapter {
           }
         }
 
-        if (primaryDb !== 'nucleotide') {
-          candidates.push({ db: 'nucleotide', id: idOrAccession });
-        }
-
         let lastError: Error | null = null;
 
         for (const candidate of candidates) {
@@ -1127,7 +1237,7 @@ class NCBIAdapter {
 
             try {
               const url = this.buildFetchUrl(candidate.db, candidate.id, 'fasta', start, stop);
-              const res = await fetch(url, { signal: sig });
+              let res = await fetch(url, { signal: sig });
 
               if (res.status === 429) {
                 // Rate limited: pause and retry
@@ -1136,20 +1246,41 @@ class NCBIAdapter {
               }
 
               if (!res.ok) {
-                lastError = new Error(`NCBI E-Utilities HTTP ${res.status}: ${res.statusText}`);
-                await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
-                continue;
+                // Try backend proxy fallback
+                res = await fetch(`/api/ncbi/fetch?db=${candidate.db}&id=${encodeURIComponent(candidate.id)}&rettype=fasta&seq_start=${start}&seq_stop=${stop}&strand=1`, { signal: sig });
               }
 
-              const text = await res.text();
-              if (text && text.trim().startsWith('>')) {
-                return text;
+              if (res.ok) {
+                const text = await res.text();
+                if (text && text.trim().startsWith('>')) {
+                  const lines = text.split(/\r?\n/).filter(l => !l.startsWith('>'));
+                  const seq = lines.join('').replace(/\s+/g, '');
+                  if (seq.length > 0) {
+                    return text;
+                  }
+                }
               }
 
               lastError = new Error(`Invalid FASTA payload returned for NCBI ${candidate.db.toUpperCase()} record ${candidate.id}`);
             } catch (err: any) {
               if (err.name === 'AbortError' || sig?.aborted) {
                 throw err;
+              }
+              try {
+                // Direct proxy fallback on CORS or client network failure
+                const pRes = await fetch(`/api/ncbi/fetch?db=${candidate.db}&id=${encodeURIComponent(candidate.id)}&rettype=fasta&seq_start=${start}&seq_stop=${stop}&strand=1`, { signal: sig });
+                if (pRes.ok) {
+                  const text = await pRes.text();
+                  if (text && text.trim().startsWith('>')) {
+                    const lines = text.split(/\r?\n/).filter(l => !l.startsWith('>'));
+                    const seq = lines.join('').replace(/\s+/g, '');
+                    if (seq.length > 0) {
+                      return text;
+                    }
+                  }
+                }
+              } catch {
+                // proceed
               }
               lastError = err;
             }
@@ -1160,7 +1291,7 @@ class NCBIAdapter {
 
         throw new Error(
           lastError?.message ||
-          `Unable to fetch sequence region ${start}..${stop} for NCBI ${db.toUpperCase()} record ${idOrAccession}.`
+          `Unable to fetch sequence region ${start}..${stop} for NCBI ${normalizedDb.toUpperCase()} record ${idOrAccession}.`
         );
       },
       {

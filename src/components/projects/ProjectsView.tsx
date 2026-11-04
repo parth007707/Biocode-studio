@@ -52,7 +52,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ user, onOpenAuth, on
 
   useEffect(() => {
     loadProjects();
-  }, [user]);
+  }, [user?.id]);
 
   const loadProjects = async () => {
     setLoading(true);

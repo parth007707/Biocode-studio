@@ -15,13 +15,35 @@ let memoryMessages: Record<string, AiMessage[]> = {};
 
 export class AiService {
   /**
+   * Fetch backend AI configuration (Single Source of Truth)
+   */
+  async getAiConfig(): Promise<{ primaryModel: string; fallbackModels: string[]; configured: boolean }> {
+    try {
+      const response = await fetch('/api/ai/config', {
+        headers: { Accept: 'application/json' }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        return data;
+      }
+    } catch (err) {
+      console.warn('[AiService] Failed to load /api/ai/config:', err);
+    }
+    return {
+      primaryModel: 'gemini-3.1-flash-lite',
+      fallbackModels: ['gemini-flash-lite-latest', 'gemini-3.5-flash-lite'],
+      configured: true
+    };
+  }
+
+  /**
    * Send user message to the backend AI route (/api/ai/chat)
    */
   async sendMessageToAi(
     message: string, 
     history: { role: 'user' | 'model'; content: string }[], 
     context?: AiContextData
-  ): Promise<{ text: string; modelUsed?: string }> {
+  ): Promise<{ text: string; modelUsed?: string; requestId?: string }> {
     try {
       const endpoint = '/api/ai/chat';
       console.log('[BioAI Request]', {
@@ -68,8 +90,12 @@ export class AiService {
       }
 
       if (!response.ok || data.ok === false) {
-        const errorMsg = data.error || data.message || `HTTP ${response.status}: Failed to reach BioAI service`;
-        throw new Error(errorMsg);
+        const errorMsg = data.error?.message || data.error || data.message || `HTTP ${response.status}: Failed to reach BioAI service`;
+        const errObj: any = new Error(errorMsg);
+        errObj.code = data.error?.code || data.code;
+        errObj.modelUsed = data.modelUsed;
+        errObj.status = response.status;
+        throw errObj;
       }
 
       if (!data.text) {
@@ -78,7 +104,8 @@ export class AiService {
 
       return {
         text: data.text,
-        modelUsed: data.modelUsed
+        modelUsed: data.modelUsed,
+        requestId: data.requestId
       };
     } catch (err: any) {
       console.error('[AiService.sendMessageToAi Error]', err);

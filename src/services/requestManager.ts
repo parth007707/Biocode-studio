@@ -219,7 +219,7 @@ class RequestManager {
       this.inFlightMap.set(key, promise);
       promise.finally(() => {
         this.inFlightMap.delete(key);
-      });
+      }).catch(() => {});
     }
 
     return promise;

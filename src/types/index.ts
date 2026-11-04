@@ -281,3 +281,31 @@ export interface AiConversation {
   updated_at: string;
   messages?: AiMessage[];
 }
+
+export interface StructureRecord {
+  id: string;
+  sequence_id?: string | null;
+  sequence_version: string;
+  sequence_hash: string;
+  sequence_length: number;
+  structure_format: 'PDB' | 'mmCIF';
+  structure_data?: string | null;
+  structure_location?: string | null;
+  source_type: 'EXPERIMENTAL' | 'PREDICTED';
+  source_id?: string | null;
+  source_name?: string | null;
+  prediction_method?: string | null;
+  model_version?: string | null;
+  resolution?: string | null;
+  experimental_method?: string | null;
+  confidence?: {
+    metric: string;
+    value: number | string;
+    description?: string;
+  } | null;
+  status: 'SYNCHRONIZED' | 'OUTDATED' | 'COMPUTING' | 'FAILED';
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+

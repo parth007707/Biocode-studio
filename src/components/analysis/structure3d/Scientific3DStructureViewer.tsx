@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import * as THREE from 'three';
 import {
   ResolvedStructure3D,
@@ -35,10 +35,17 @@ interface Scientific3DStructureViewerProps {
   structure: ResolvedStructure3D;
   initialRepresentation?: RepresentationMode;
   initialColorScheme?: ColorScheme;
+  representation?: RepresentationMode;
+  colorScheme?: ColorScheme;
   onSelectResidue?: (resSeq: number) => void;
   selectedResSeq?: number | null;
   className?: string;
   enableControls?: boolean;
+  resetTrigger?: number;
+  centerTrigger?: number;
+  zoomInTrigger?: number;
+  zoomOutTrigger?: number;
+  backgroundColor?: number;
 }
 
 // Hydrophobicity colors (Kyte-Doolittle)
@@ -79,14 +86,21 @@ export const Scientific3DStructureViewer: React.FC<Scientific3DStructureViewerPr
   structure,
   initialRepresentation = 'ribbon',
   initialColorScheme = 'secondary_structure',
+  representation: controlledRepresentation,
+  colorScheme: controlledColorScheme,
   onSelectResidue,
   selectedResSeq,
   className = '',
-  enableControls = true
+  enableControls = true,
+  resetTrigger,
+  centerTrigger,
+  zoomInTrigger,
+  zoomOutTrigger,
+  backgroundColor = 0xf8fafc
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [representation, setRepresentation] = useState<RepresentationMode>(initialRepresentation);
-  const [colorScheme, setColorScheme] = useState<ColorScheme>(initialColorScheme);
+  const [representation, setRepresentation] = useState<RepresentationMode>(controlledRepresentation || initialRepresentation);
+  const [colorScheme, setColorScheme] = useState<ColorScheme>(controlledColorScheme || initialColorScheme);
   const [autoRotate, setAutoRotate] = useState<boolean>(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [slabClipping, setSlabClipping] = useState<number>(100); // 0 to 100%
@@ -96,6 +110,20 @@ export const Scientific3DStructureViewer: React.FC<Scientific3DStructureViewerPr
   const [hoveredResidue, setHoveredResidue] = useState<Residue3D | null>(null);
   const [selectedResidueData, setSelectedResidueData] = useState<Residue3D | null>(null);
   const [copiedPdb, setCopiedPdb] = useState<boolean>(false);
+  const [coordinateError, setCoordinateError] = useState<string | null>(null);
+
+  // Sync controlled representation and colorScheme
+  useEffect(() => {
+    if (controlledRepresentation && controlledRepresentation !== representation) {
+      setRepresentation(controlledRepresentation);
+    }
+  }, [controlledRepresentation]);
+
+  useEffect(() => {
+    if (controlledColorScheme && controlledColorScheme !== colorScheme) {
+      setColorScheme(controlledColorScheme);
+    }
+  }, [controlledColorScheme]);
 
   // Three.js Scene References
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -104,6 +132,7 @@ export const Scientific3DStructureViewer: React.FC<Scientific3DStructureViewerPr
   const macromoleculeGroupRef = useRef<THREE.Group | null>(null);
   const measurementGroupRef = useRef<THREE.Group | null>(null);
   const animFrameIdRef = useRef<number | null>(null);
+  const hasFittedRef = useRef<boolean>(false);
 
   // Raycasting & Interaction Refs
   const raycasterRef = useRef<THREE.Raycaster>(new THREE.Raycaster());
@@ -114,7 +143,7 @@ export const Scientific3DStructureViewer: React.FC<Scientific3DStructureViewerPr
   // Get color for an atom / residue based on active scheme
   const getResidueColor = (res: Residue3D, totalResidues: number, atom?: AtomicCoordinate): number => {
     if (colorScheme === 'mutation_delta') {
-      if (res.isMutated) return 0xfacc15; // Golden glowing mutation
+      if (res.isMutated) return 0xef4444; // Vibrant Red mutation highlight
       return 0x334155; // Dark slate non-mutated
     }
 
@@ -165,154 +194,332 @@ export const Scientific3DStructureViewer: React.FC<Scientific3DStructureViewerPr
     macromoleculeGroupRef.current = rootGroup;
     scene.add(rootGroup);
 
-    const chain = structure.chains[0];
-    if (!chain || chain.residues.length === 0) return;
-
-    const residues = chain.residues;
-    const totalRes = residues.length;
-    const center = structure.boundingBox.center;
-
-    // 1. CARTOON / RIBBON REPRESENTATION (Smooth CatmullRom Spline Backbone)
-    if (representation === 'ribbon' || representation === 'backbone_trace') {
-      const backbonePoints: THREE.Vector3[] = [];
-      const residueMapping: Residue3D[] = [];
-
-      for (const res of residues) {
-        const guideAtom = res.ca || res.atoms[0];
-        if (guideAtom) {
-          backbonePoints.push(
-            new THREE.Vector3(
-              guideAtom.x - center[0],
-              guideAtom.y - center[1],
-              guideAtom.z - center[2]
-            )
-          );
-          residueMapping.push(res);
-        }
-      }
-
-      if (backbonePoints.length >= 2) {
-        const curve = new THREE.CatmullRomCurve3(backbonePoints, false, 'catmullrom', 0.5);
-        const tubularSegments = Math.max(30, backbonePoints.length * 8);
-        const radius = representation === 'ribbon' ? 0.65 : 0.22;
-        const radialSegments = representation === 'ribbon' ? 12 : 6;
-
-        const tubeGeo = new THREE.TubeGeometry(curve, tubularSegments, radius, radialSegments, false);
-
-        // Vertex Coloring for Tube
-        const count = tubeGeo.attributes.position.count;
-        const colors = new Float32Array(count * 3);
-        const col = new THREE.Color();
-
-        for (let i = 0; i < count; i++) {
-          const t = i / count;
-          const resIdx = Math.min(totalRes - 1, Math.floor(t * totalRes));
-          const res = residues[resIdx];
-          const hex = getResidueColor(res, totalRes);
-          col.setHex(hex);
-          colors[i * 3] = col.r;
-          colors[i * 3 + 1] = col.g;
-          colors[i * 3 + 2] = col.b;
-        }
-
-        tubeGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-        const tubeMat = new THREE.MeshStandardMaterial({
-          vertexColors: true,
-          roughness: 0.35,
-          metalness: 0.15,
-          side: THREE.DoubleSide
-        });
-
-        const tubeMesh = new THREE.Mesh(tubeGeo, tubeMat);
-        tubeMesh.castShadow = true;
-        tubeMesh.receiveShadow = true;
-        rootGroup.add(tubeMesh);
-      }
-
-      // Add mutation highlight rings
-      const sphereGeo = new THREE.SphereGeometry(0.85, 16, 16);
-      residues.forEach((res) => {
-        if (res.isMutated && res.ca) {
-          const mutColor = new THREE.Color(0xfacc15);
-          const mutMat = new THREE.MeshStandardMaterial({
-            color: mutColor,
-            emissive: 0xf59e0b,
-            emissiveIntensity: 0.6,
-            roughness: 0.2
-          });
-          const mutMesh = new THREE.Mesh(sphereGeo, mutMat);
-          mutMesh.position.set(res.ca.x - center[0], res.ca.y - center[1], res.ca.z - center[2]);
-          (mutMesh as any).userData = { residue: res };
-          rootGroup.add(mutMesh);
-        }
-      });
+    const chains = structure.chains;
+    if (!chains || chains.length === 0) {
+      console.warn('[3DViewer] No chains present in structure:', structure.id);
+      setCoordinateError('No molecular chains present in structure record.');
+      return;
     }
 
-    // 2. BALL AND STICK (Atomic precision)
-    if (representation === 'ball_and_stick') {
-      const atomSphereGeo = new THREE.SphereGeometry(0.45, 14, 14);
-      const bondGeo = new THREE.CylinderGeometry(0.12, 0.12, 1, 8);
-      const bondMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.4 });
+    const allAtoms = structure.allAtoms || [];
+    if (allAtoms.length === 0) {
+      console.warn('[3DViewer] No atomic coordinates in structure:', structure.id);
+      setCoordinateError('No 3D atomic coordinates available in target record.');
+      return;
+    }
 
-      // Render Atoms
-      residues.forEach((res) => {
-        const hex = getResidueColor(res, totalRes);
-        const atomMat = new THREE.MeshStandardMaterial({
-          color: hex,
-          roughness: 0.3,
-          metalness: 0.2,
-          emissive: res.isMutated ? 0xf59e0b : 0x000000,
-          emissiveIntensity: res.isMutated ? 0.5 : 0
+    const validAtoms = allAtoms.filter(a => Number.isFinite(a.x) && Number.isFinite(a.y) && Number.isFinite(a.z));
+    if (validAtoms.length === 0) {
+      console.warn('[3DViewer] All coordinates contain non-finite numbers:', structure.id);
+      setCoordinateError('Coordinate array contains invalid non-finite values.');
+      return;
+    }
+
+    setCoordinateError(null);
+
+    const allResidues = chains.flatMap((c) => c.residues);
+    const center = structure.boundingBox?.center || [0, 0, 0];
+    const isStructureNucleic = structure.macromoleculeType === 'DNA' || structure.macromoleculeType === 'RNA';
+
+    console.log(`[3DViewer] Building 3D geometry for ${structure.id} (${structure.macromoleculeType || 'Macromolecule'}, mode=${representation}, atoms=${allAtoms.length}, residues=${allResidues.length})...`);
+
+    // 1. CARTOON / RIBBON / BACKBONE / WIREFRAME
+    if (representation === 'ribbon' || representation === 'backbone_trace' || representation === 'wireframe') {
+      const radius = representation === 'ribbon' ? 0.65 : representation === 'wireframe' ? 0.45 : 0.25;
+      const radialSegments = representation === 'ribbon' ? 12 : representation === 'wireframe' ? 8 : 8;
+
+      for (const chain of chains) {
+        const residues = chain.residues;
+        if (!residues || residues.length === 0) continue;
+        const totalRes = residues.length;
+        const hasProteinAtoms = residues.some(r => r.ca || r.atoms.some(a => a.name === 'CA'));
+        const hasNucleicAtoms = residues.some(r => r.atoms.some(a => a.name === "C4'" || a.name === 'P'));
+        const isChainNucleic = hasNucleicAtoms || (!hasProteinAtoms && (chain.type === 'DNA' || chain.type === 'RNA'));
+        // Nucleic acids have 6.0-7.8 Å guide atom distances (P-P or C4'-C4'); proteins have ~3.8 Å (CA-CA)
+        const maxGapDist = isChainNucleic ? 9.5 : 6.0;
+
+        const segments: { points: THREE.Vector3[]; residues: Residue3D[] }[] = [];
+        let curSegment: { points: THREE.Vector3[]; residues: Residue3D[] } = { points: [], residues: [] };
+
+        for (let i = 0; i < residues.length; i++) {
+          const res = residues[i];
+          const guideAtom = isChainNucleic
+            ? (res.atoms.find(a => a.name === "C4'") || res.atoms.find(a => a.name === 'P') || res.ca || res.atoms[0])
+            : (res.ca || res.atoms.find(a => a.name === 'CA') || res.atoms.find(a => a.name === "C4'") || res.atoms[0]);
+
+          if (!guideAtom || !Number.isFinite(guideAtom.x) || !Number.isFinite(guideAtom.y) || !Number.isFinite(guideAtom.z)) {
+            continue;
+          }
+
+          const pt = new THREE.Vector3(
+            guideAtom.x - center[0],
+            guideAtom.y - center[1],
+            guideAtom.z - center[2]
+          );
+
+          if (curSegment.points.length > 0) {
+            const prevPt = curSegment.points[curSegment.points.length - 1];
+            if (prevPt.distanceTo(pt) > maxGapDist) {
+              // Real gap/break in coordinates
+              if (curSegment.points.length >= 2) {
+                segments.push(curSegment);
+              } else if (curSegment.points.length === 1) {
+                // Single isolated residue bead
+                const p = curSegment.points[0];
+                const r = curSegment.residues[0];
+                const beadGeo = new THREE.SphereGeometry(radius * 1.5, 12, 12);
+                const beadMat = new THREE.MeshStandardMaterial({
+                  color: getResidueColor(r, totalRes),
+                  roughness: 0.35,
+                  metalness: 0.15
+                });
+                const beadMesh = new THREE.Mesh(beadGeo, beadMat);
+                beadMesh.position.copy(p);
+                (beadMesh as any).userData = { residue: r, chainId: chain.id };
+                rootGroup.add(beadMesh);
+              }
+              curSegment = { points: [], residues: [] };
+            }
+          }
+          curSegment.points.push(pt);
+          curSegment.residues.push(res);
+        }
+        if (curSegment.points.length >= 2) {
+          segments.push(curSegment);
+        } else if (curSegment.points.length === 1) {
+          const p = curSegment.points[0];
+          const r = curSegment.residues[0];
+          const beadGeo = new THREE.SphereGeometry(radius * 1.5, 12, 12);
+          const beadMat = new THREE.MeshStandardMaterial({
+            color: getResidueColor(r, totalRes),
+            roughness: 0.35,
+            metalness: 0.15
+          });
+          const beadMesh = new THREE.Mesh(beadGeo, beadMat);
+          beadMesh.position.copy(p);
+          (beadMesh as any).userData = { residue: r, chainId: chain.id };
+          rootGroup.add(beadMesh);
+        }
+
+        for (const seg of segments) {
+          const segPoints = seg.points;
+          const segResidues = seg.residues;
+          const curve = new THREE.CatmullRomCurve3(segPoints, false, 'centripetal', 0.5);
+          const tubularSegments = Math.max(16, segPoints.length * 6);
+          const tubeGeo = new THREE.TubeGeometry(curve, tubularSegments, radius, radialSegments, false);
+
+          const count = tubeGeo.attributes.position.count;
+          const colors = new Float32Array(count * 3);
+          const col = new THREE.Color();
+
+          for (let i = 0; i < count; i++) {
+            const t = i / count;
+            const resIdx = Math.min(segResidues.length - 1, Math.floor(t * segResidues.length));
+            const res = segResidues[resIdx];
+            if (chain.type === 'DNA') {
+              col.setHex(chain.id === 'B' ? 0x0284c7 : 0x38bdf8);
+            } else if (chain.type === 'RNA') {
+              col.setHex(0x10b981);
+            } else {
+              const hex = getResidueColor(res, totalRes);
+              col.setHex(hex);
+            }
+            colors[i * 3] = col.r;
+            colors[i * 3 + 1] = col.g;
+            colors[i * 3 + 2] = col.b;
+          }
+
+          tubeGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+          const tubeMat = new THREE.MeshStandardMaterial({
+            vertexColors: true,
+            roughness: 0.35,
+            metalness: 0.15,
+            wireframe: representation === 'wireframe',
+            side: THREE.DoubleSide
+          });
+
+          const tubeMesh = new THREE.Mesh(tubeGeo, tubeMat);
+          tubeMesh.castShadow = true;
+          tubeMesh.receiveShadow = true;
+          (tubeMesh as any).userData = { chainId: chain.id };
+          rootGroup.add(tubeMesh);
+        }
+
+        // For nucleic acids in Cartoon/Ribbon mode: add base rungs (connecting backbone to base ring)
+        if (isChainNucleic && representation === 'ribbon') {
+          const rungMat = new THREE.MeshStandardMaterial({
+            color: chain.type === 'RNA' ? 0x34d399 : 0x0ea5e9,
+            roughness: 0.35,
+            metalness: 0.1
+          });
+          const rungGeo = new THREE.CylinderGeometry(0.18, 0.18, 1, 8);
+          for (const res of residues) {
+            const sugarAtom = res.atoms.find(a => a.name === "C4'") || res.ca;
+            const baseAtom = res.atoms.find(a => a.name === 'N1' || a.name === 'N9');
+            if (sugarAtom && baseAtom) {
+              addBondCylinder(sugarAtom, baseAtom, center, rungGeo, rungMat, rootGroup);
+            }
+          }
+        }
+
+        // Add mutation highlight rings on this chain
+        const sphereGeo = new THREE.SphereGeometry(0.85, 16, 16);
+        residues.forEach((res) => {
+          if (res.isMutated && res.ca) {
+            const mutColor = new THREE.Color(0xef4444);
+            const mutMat = new THREE.MeshStandardMaterial({
+              color: mutColor,
+              emissive: 0xdc2626,
+              emissiveIntensity: 0.8,
+              roughness: 0.2
+            });
+            const mutMesh = new THREE.Mesh(sphereGeo, mutMat);
+            mutMesh.position.set(res.ca.x - center[0], res.ca.y - center[1], res.ca.z - center[2]);
+            (mutMesh as any).userData = { residue: res };
+            rootGroup.add(mutMesh);
+          }
         });
+      }
 
-        res.atoms.forEach((atom) => {
-          const mesh = new THREE.Mesh(atomSphereGeo, atomMat);
-          mesh.position.set(atom.x - center[0], atom.y - center[1], atom.z - center[2]);
-          (mesh as any).userData = { atom, residue: res };
-          rootGroup.add(mesh);
-        });
-
-        // Backbone Intra-Residue Bonds (N -> CA -> C -> O)
-        if (res.n && res.ca) addBondCylinder(res.n, res.ca, center, bondGeo, bondMat, rootGroup);
-        if (res.ca && res.c) addBondCylinder(res.ca, res.c, center, bondGeo, bondMat, rootGroup);
-        if (res.c && res.o) addBondCylinder(res.c, res.o, center, bondGeo, bondMat, rootGroup);
-      });
-
-      // Peptide Inter-Residue Bonds (C_i -> N_{i+1})
-      for (let i = 0; i < residues.length - 1; i++) {
-        const curr = residues[i];
-        const next = residues[i + 1];
-        if (curr.c && next.n) {
-          const dist = calculateDistanceAngstrom(curr.c, next.n);
-          if (dist < 2.0) {
-            addBondCylinder(curr.c, next.n, center, bondGeo, bondMat, rootGroup);
+      // Duplex nucleic acids: connect paired bases across Chain A and Chain B
+      if (isStructureNucleic && representation === 'ribbon' && chains.length >= 2) {
+        const chainA = chains[0];
+        const chainB = chains[1];
+        const minLen = Math.min(chainA.residues.length, chainB.residues.length);
+        const pairBondGeo = new THREE.CylinderGeometry(0.14, 0.14, 1, 8);
+        const pairBondMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.4 });
+        for (let i = 0; i < minLen; i++) {
+          const baseA = chainA.residues[i].atoms.find(a => a.name === 'N1' || a.name === 'N9');
+          const baseB = chainB.residues[i].atoms.find(a => a.name === 'N1' || a.name === 'N9');
+          if (baseA && baseB) {
+            const dist = calculateDistanceAngstrom(baseA, baseB);
+            if (dist < 6.0) {
+              addBondCylinder(baseA, baseB, center, pairBondGeo, pairBondMat, rootGroup);
+            }
           }
         }
       }
     }
 
-    // 3. SPACE FILLING (Full Van der Waals CPK spheres)
+    // 2. BALL AND STICK (Atomic precision across all chains)
+    if (representation === 'ball_and_stick') {
+      const atomSphereGeo = new THREE.SphereGeometry(0.45, 14, 14);
+      const bondGeo = new THREE.CylinderGeometry(0.12, 0.12, 1, 8);
+      const bondMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.4 });
+
+      for (const chain of chains) {
+        const residues = chain.residues;
+        const totalRes = residues.length;
+        const hasProteinAtoms = residues.some(r => r.ca || r.atoms.some(a => a.name === 'CA'));
+        const hasNucleicAtoms = residues.some(r => r.atoms.some(a => a.name === "C4'" || a.name === 'P'));
+        const isChainNucleic = hasNucleicAtoms || (!hasProteinAtoms && (chain.type === 'DNA' || chain.type === 'RNA'));
+
+        residues.forEach((res) => {
+          const hex = getResidueColor(res, totalRes);
+          const atomMat = new THREE.MeshStandardMaterial({
+            color: hex,
+            roughness: 0.3,
+            metalness: 0.2,
+            emissive: res.isMutated ? 0xf59e0b : 0x000000,
+            emissiveIntensity: res.isMutated ? 0.5 : 0
+          });
+
+          res.atoms.forEach((atom) => {
+            if (Number.isFinite(atom.x) && Number.isFinite(atom.y) && Number.isFinite(atom.z)) {
+              const mesh = new THREE.Mesh(atomSphereGeo, atomMat);
+              mesh.position.set(atom.x - center[0], atom.y - center[1], atom.z - center[2]);
+              (mesh as any).userData = { atom, residue: res };
+              rootGroup.add(mesh);
+            }
+          });
+
+          if (isChainNucleic) {
+            // Nucleic Acid Intra-Residue Bonds: P -> C4', C4' -> base
+            const pAtom = res.atoms.find(a => a.name === 'P');
+            const c4Atom = res.atoms.find(a => a.name === "C4'");
+            const baseAtom = res.atoms.find(a => a.name === 'N1' || a.name === 'N9');
+            if (pAtom && c4Atom) addBondCylinder(pAtom, c4Atom, center, bondGeo, bondMat, rootGroup);
+            if (c4Atom && baseAtom) addBondCylinder(c4Atom, baseAtom, center, bondGeo, bondMat, rootGroup);
+          } else {
+            // Protein Backbone Intra-Residue Bonds (N -> CA -> C -> O)
+            if (res.n && res.ca) addBondCylinder(res.n, res.ca, center, bondGeo, bondMat, rootGroup);
+            if (res.ca && res.c) addBondCylinder(res.ca, res.c, center, bondGeo, bondMat, rootGroup);
+            if (res.c && res.o) addBondCylinder(res.c, res.o, center, bondGeo, bondMat, rootGroup);
+          }
+        });
+
+        if (isChainNucleic) {
+          // Nucleic Acid Inter-Residue Phosphodiester Bonds (C4'_i -> P_{i+1})
+          for (let i = 0; i < residues.length - 1; i++) {
+            const currC4 = residues[i].atoms.find(a => a.name === "C4'");
+            const nextP = residues[i + 1].atoms.find(a => a.name === 'P');
+            if (currC4 && nextP) {
+              const dist = calculateDistanceAngstrom(currC4, nextP);
+              if (dist < 8.5) {
+                addBondCylinder(currC4, nextP, center, bondGeo, bondMat, rootGroup);
+              }
+            }
+          }
+        } else {
+          // Peptide Inter-Residue Bonds (C_i -> N_{i+1})
+          for (let i = 0; i < residues.length - 1; i++) {
+            const curr = residues[i];
+            const next = residues[i + 1];
+            if (curr.c && next.n) {
+              const dist = calculateDistanceAngstrom(curr.c, next.n);
+              if (dist < 2.0) {
+                addBondCylinder(curr.c, next.n, center, bondGeo, bondMat, rootGroup);
+              }
+            }
+          }
+        }
+      }
+
+      // Duplex base pairing in Ball & Stick
+      if (isStructureNucleic && chains.length >= 2) {
+        const chainA = chains[0];
+        const chainB = chains[1];
+        const minLen = Math.min(chainA.residues.length, chainB.residues.length);
+        for (let i = 0; i < minLen; i++) {
+          const baseA = chainA.residues[i].atoms.find(a => a.name === 'N1' || a.name === 'N9');
+          const baseB = chainB.residues[i].atoms.find(a => a.name === 'N1' || a.name === 'N9');
+          if (baseA && baseB) {
+            const dist = calculateDistanceAngstrom(baseA, baseB);
+            if (dist < 6.0) {
+              addBondCylinder(baseA, baseB, center, bondGeo, bondMat, rootGroup);
+            }
+          }
+        }
+      }
+    }
+
+    // 3. SPACE FILLING (Full Van der Waals CPK spheres across all chains)
     if (representation === 'space_fill' || representation === 'surface') {
       const vdwSphereGeo = new THREE.SphereGeometry(1.25, 14, 14);
 
-      residues.forEach((res) => {
-        const hex = getResidueColor(res, totalRes);
-        const sphereMat = new THREE.MeshStandardMaterial({
-          color: hex,
-          roughness: 0.45,
-          metalness: 0.1,
-          opacity: representation === 'surface' ? 0.85 : 1.0,
-          transparent: representation === 'surface'
-        });
+      for (const chain of chains) {
+        const residues = chain.residues;
+        const totalRes = residues.length;
 
-        res.atoms.forEach((atom) => {
-          const mesh = new THREE.Mesh(vdwSphereGeo, sphereMat);
-          mesh.position.set(atom.x - center[0], atom.y - center[1], atom.z - center[2]);
-          (mesh as any).userData = { atom, residue: res };
-          rootGroup.add(mesh);
+        residues.forEach((res) => {
+          const hex = getResidueColor(res, totalRes);
+          const sphereMat = new THREE.MeshStandardMaterial({
+            color: hex,
+            roughness: 0.45,
+            metalness: 0.1,
+            opacity: representation === 'surface' ? 0.85 : 1.0,
+            transparent: representation === 'surface'
+          });
+
+          res.atoms.forEach((atom) => {
+            const mesh = new THREE.Mesh(vdwSphereGeo, sphereMat);
+            mesh.position.set(atom.x - center[0], atom.y - center[1], atom.z - center[2]);
+            (mesh as any).userData = { atom, residue: res };
+            rootGroup.add(mesh);
+          });
         });
-      });
+      }
     }
 
     // Add Disulfide Bridges
@@ -321,8 +528,8 @@ export const Scientific3DStructureViewer: React.FC<Scientific3DStructureViewerPr
       const ssBondGeo = new THREE.CylinderGeometry(0.2, 0.2, 1, 8);
 
       structure.disulfideBonds.forEach((ss) => {
-        const r1 = residues.find((r) => r.resSeq === ss.res1);
-        const r2 = residues.find((r) => r.resSeq === ss.res2);
+        const r1 = allResidues.find((r) => r.resSeq === ss.res1);
+        const r2 = allResidues.find((r) => r.resSeq === ss.res2);
         if (r1?.ca && r2?.ca) {
           addBondCylinder(r1.ca, r2.ca, center, ssBondGeo, ssBondMat, rootGroup);
         }
@@ -342,6 +549,45 @@ export const Scientific3DStructureViewer: React.FC<Scientific3DStructureViewerPr
           rootGroup.add(mesh);
         });
       });
+    }
+
+    // Add Mutation Highlight Beacons (visible across all representations)
+    const mutSphereGeo = new THREE.SphereGeometry(1.1, 16, 16);
+    const mutMat = new THREE.MeshStandardMaterial({
+      color: 0xef4444,
+      emissive: 0xdc2626,
+      emissiveIntensity: 0.9,
+      roughness: 0.2
+    });
+
+    allResidues.forEach((res) => {
+      if (res.isMutated) {
+        const anchor = res.ca || res.atoms[0];
+        if (anchor) {
+          const mutMesh = new THREE.Mesh(mutSphereGeo, mutMat);
+          mutMesh.position.set(anchor.x - center[0], anchor.y - center[1], anchor.z - center[2]);
+          (mutMesh as any).userData = { residue: res };
+          rootGroup.add(mutMesh);
+        }
+      }
+    });
+
+    // Add Selected Residue Beacon Ring
+    if (selectedResSeq) {
+      const selRes = allResidues.find((r) => r.resSeq === selectedResSeq);
+      const anchor = selRes?.ca || selRes?.atoms[0];
+      if (anchor) {
+        const ringGeo = new THREE.TorusGeometry(1.5, 0.18, 12, 24);
+        const ringMat = new THREE.MeshStandardMaterial({
+          color: 0x38bdf8,
+          emissive: 0x0284c7,
+          emissiveIntensity: 0.95,
+          roughness: 0.15
+        });
+        const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+        ringMesh.position.set(anchor.x - center[0], anchor.y - center[1], anchor.z - center[2]);
+        rootGroup.add(ringMesh);
+      }
     }
   };
 
@@ -373,6 +619,98 @@ export const Scientific3DStructureViewer: React.FC<Scientific3DStructureViewerPr
     group.add(mesh);
   };
 
+  // Dynamic Bounding Box & Sphere Fit-to-View Calculator
+  const fitModelToView = useCallback((centerOnly = false) => {
+    if (!containerRef.current || !cameraRef.current || !macromoleculeGroupRef.current) return;
+    const container = containerRef.current;
+    const w = container.clientWidth || 600;
+    const h = container.clientHeight || 500;
+    if (w <= 0 || h <= 0) return;
+
+    const group = macromoleculeGroupRef.current;
+    // Reset group transforms to measure exact object bounds
+    group.position.set(0, 0, 0);
+    group.rotation.set(0, 0, 0);
+    group.updateMatrixWorld(true);
+
+    const box = new THREE.Box3().setFromObject(group);
+    if (box.isEmpty()) return;
+
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    const sphere = new THREE.Sphere();
+    box.getBoundingSphere(sphere);
+    const radius = Math.max(sphere.radius, 15);
+
+    // Center model geometry so its true bounding center is at origin (0, 0, 0)
+    group.position.set(-center.x, -center.y, -center.z);
+
+    if (measurementGroupRef.current) {
+      measurementGroupRef.current.position.set(-center.x, -center.y, -center.z);
+    }
+
+    // Default pleasant isometric view angle
+    group.rotation.set(0.12, 0.25, 0);
+    if (measurementGroupRef.current) {
+      measurementGroupRef.current.rotation.set(0.12, 0.25, 0);
+    }
+
+    if (centerOnly) {
+      cameraRef.current.lookAt(0, 0, 0);
+      if (rendererRef.current && sceneRef.current) {
+        rendererRef.current.render(sceneRef.current, cameraRef.current);
+      }
+      return;
+    }
+
+    // Camera frustum calculation to fit entire bounding sphere with 35% margin
+    const fov = cameraRef.current.fov * (Math.PI / 180);
+    const aspect = w / h;
+    const fovH = 2 * Math.atan(Math.tan(fov / 2) * aspect);
+
+    const distV = radius / Math.tan(fov / 2);
+    const distH = radius / Math.tan(fovH / 2);
+    const targetDistance = Math.max(distV, distH) * 1.30; // Guaranteed padding to prevent clipping
+
+    cameraRef.current.position.set(0, 0, Math.max(targetDistance, 25));
+    cameraRef.current.near = 0.1;
+    cameraRef.current.far = 4000;
+    cameraRef.current.aspect = aspect;
+    cameraRef.current.lookAt(0, 0, 0);
+    cameraRef.current.updateProjectionMatrix();
+
+    if (rendererRef.current && sceneRef.current) {
+      rendererRef.current.render(sceneRef.current, cameraRef.current);
+    }
+  }, []);
+
+  // Listen to external reset/center triggers
+  useEffect(() => {
+    if (resetTrigger !== undefined && resetTrigger > 0) {
+      fitModelToView(false);
+    }
+  }, [resetTrigger, fitModelToView]);
+
+  useEffect(() => {
+    if (centerTrigger !== undefined && centerTrigger > 0) {
+      fitModelToView(true);
+    }
+  }, [centerTrigger, fitModelToView]);
+
+  useEffect(() => {
+    if (zoomInTrigger !== undefined && zoomInTrigger > 0 && cameraRef.current) {
+      cameraRef.current.position.z = Math.max(8, cameraRef.current.position.z * 0.82);
+      cameraRef.current.updateProjectionMatrix();
+    }
+  }, [zoomInTrigger]);
+
+  useEffect(() => {
+    if (zoomOutTrigger !== undefined && zoomOutTrigger > 0 && cameraRef.current) {
+      cameraRef.current.position.z = Math.min(350, cameraRef.current.position.z * 1.22);
+      cameraRef.current.updateProjectionMatrix();
+    }
+  }, [zoomOutTrigger]);
+
   // Setup Three.js WebGL Renderer
   useEffect(() => {
     const container = containerRef.current;
@@ -382,12 +720,12 @@ export const Scientific3DStructureViewer: React.FC<Scientific3DStructureViewerPr
     const height = container.clientHeight || 500;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x07090d);
+    // Light clean background for BioCode Studio theme
+    scene.background = new THREE.Color(backgroundColor);
     sceneRef.current = scene;
 
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
-    const radius = structure.boundingBox.radius || 25;
-    camera.position.set(0, 0, Math.max(35, radius * 2.4));
+    camera.position.set(0, 0, 60);
     cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({
@@ -406,20 +744,20 @@ export const Scientific3DStructureViewer: React.FC<Scientific3DStructureViewerPr
     }
     container.appendChild(renderer.domElement);
 
-    // Studio 3-Point Biological Lighting
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+    // Studio 4-Point Biological Lighting for clear contrast on light canvas
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.25);
     scene.add(ambientLight);
 
-    const keyLight = new THREE.DirectionalLight(0xffffff, 1.4);
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.8);
     keyLight.position.set(30, 45, 40);
     keyLight.castShadow = true;
     scene.add(keyLight);
 
-    const fillLight = new THREE.DirectionalLight(0x38bdf8, 0.8);
+    const fillLight = new THREE.DirectionalLight(0x0284c7, 0.7); // Subtle sky-blue biological fill
     fillLight.position.set(-35, -20, -25);
     scene.add(fillLight);
 
-    const rimLight = new THREE.DirectionalLight(0xa855f7, 0.7);
+    const rimLight = new THREE.DirectionalLight(0x9333ea, 0.5); // Subtle purple rim
     rimLight.position.set(0, -40, 20);
     scene.add(rimLight);
 
@@ -429,15 +767,23 @@ export const Scientific3DStructureViewer: React.FC<Scientific3DStructureViewerPr
     scene.add(measGroup);
 
     // Build the initial macromolecular geometry
+    hasFittedRef.current = false;
     buildStructureGeometry();
 
+    // Perform initial bounding-box calculation and fit
+    setTimeout(() => {
+      if (container.clientWidth > 0 && container.clientHeight > 0) {
+        fitModelToView(false);
+        hasFittedRef.current = true;
+      }
+    }, 50);
+
     // Render Animation Loop
-    let rot = 0;
     const animate = () => {
       animFrameIdRef.current = requestAnimationFrame(animate);
 
-      if (autoRotate && macromoleculeGroupRef.current) {
-        macromoleculeGroupRef.current.rotation.y += 0.005;
+      if (autoRotate && macromoleculeGroupRef.current && !isDraggingRef.current) {
+        macromoleculeGroupRef.current.rotation.y += 0.004;
         if (measurementGroupRef.current) {
           measurementGroupRef.current.rotation.y = macromoleculeGroupRef.current.rotation.y;
         }
@@ -447,29 +793,46 @@ export const Scientific3DStructureViewer: React.FC<Scientific3DStructureViewerPr
     };
     animate();
 
-    // Resize Handler
-    const handleResize = () => {
-      if (!container || !rendererRef.current || !cameraRef.current) return;
-      const w = container.clientWidth;
-      const h = container.clientHeight;
-      cameraRef.current.aspect = w / h;
-      cameraRef.current.updateProjectionMatrix();
-      rendererRef.current.setSize(w, h);
-    };
+    // Robust ResizeObserver for container resizing (transitions, responsive grid, flex reflow)
+    let resizeRafId: number | null = null;
+    const resizeObserver = new ResizeObserver((entries) => {
+      if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
+      resizeRafId = requestAnimationFrame(() => {
+        for (const entry of entries) {
+          const { width: w, height: h } = entry.contentRect;
+          if (w > 0 && h > 0 && rendererRef.current && cameraRef.current) {
+            cameraRef.current.aspect = w / h;
+            cameraRef.current.updateProjectionMatrix();
+            rendererRef.current.setSize(w, h, true);
+            rendererRef.current.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-    window.addEventListener('resize', handleResize);
+            if (!hasFittedRef.current || Math.abs(cameraRef.current.aspect - (w / h)) > 0.02) {
+              fitModelToView(false);
+              hasFittedRef.current = true;
+            }
+          }
+        }
+      });
+    });
+
+    resizeObserver.observe(container);
 
     return () => {
-      window.removeEventListener('resize', handleResize);
+      resizeObserver.disconnect();
+      if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
       if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
       renderer.dispose();
+      while (container.firstChild) {
+        container.removeChild(container.firstChild);
+      }
     };
-  }, [structure]);
+  }, [structure, backgroundColor, fitModelToView]);
 
-  // Re-render geometry when visualization controls change
+  // Re-render geometry when visualization controls change without remounting
   useEffect(() => {
     buildStructureGeometry();
-  }, [representation, colorScheme]);
+    fitModelToView(false);
+  }, [representation, colorScheme, selectedResSeq, fitModelToView]);
 
   // Mouse / Touch Interaction Handlers (Orbit, Pan, Pick)
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -485,7 +848,15 @@ export const Scientific3DStructureViewer: React.FC<Scientific3DStructureViewerPr
       const deltaY = e.clientY - prevMousePosRef.current.y;
       prevMousePosRef.current = { x: e.clientX, y: e.clientY };
 
-      if (e.buttons === 1) {
+      if (e.buttons === 1 && (e.shiftKey || e.metaKey)) {
+        // Shift + Left click drag: Pan
+        macromoleculeGroupRef.current.position.x += deltaX * 0.05;
+        macromoleculeGroupRef.current.position.y -= deltaY * 0.05;
+        if (measurementGroupRef.current) {
+          measurementGroupRef.current.position.x += deltaX * 0.05;
+          measurementGroupRef.current.position.y -= deltaY * 0.05;
+        }
+      } else if (e.buttons === 1) {
         // Left click drag: Rotate
         macromoleculeGroupRef.current.rotation.y += deltaX * 0.01;
         macromoleculeGroupRef.current.rotation.x += deltaY * 0.01;
@@ -497,6 +868,10 @@ export const Scientific3DStructureViewer: React.FC<Scientific3DStructureViewerPr
         // Right click drag: Pan
         macromoleculeGroupRef.current.position.x += deltaX * 0.05;
         macromoleculeGroupRef.current.position.y -= deltaY * 0.05;
+        if (measurementGroupRef.current) {
+          measurementGroupRef.current.position.x += deltaX * 0.05;
+          measurementGroupRef.current.position.y -= deltaY * 0.05;
+        }
       }
     } else {
       // Raycasting for hover tooltip
@@ -606,11 +981,7 @@ export const Scientific3DStructureViewer: React.FC<Scientific3DStructureViewerPr
   };
 
   const handleResetCamera = () => {
-    if (!cameraRef.current || !macromoleculeGroupRef.current) return;
-    const radius = structure.boundingBox.radius || 25;
-    cameraRef.current.position.set(0, 0, Math.max(35, radius * 2.4));
-    macromoleculeGroupRef.current.rotation.set(0, 0, 0);
-    macromoleculeGroupRef.current.position.set(0, 0, 0);
+    fitModelToView(false);
   };
 
   return (
@@ -753,39 +1124,51 @@ export const Scientific3DStructureViewer: React.FC<Scientific3DStructureViewerPr
         onMouseUp={handleMouseUp}
         onWheel={handleWheel}
         onClick={handleClick}
+        onDoubleClick={() => fitModelToView(false)}
         onContextMenu={(e) => e.preventDefault()}
         className="flex-1 w-full min-h-[420px] cursor-grab active:cursor-grabbing relative"
       />
 
+      {/* Coordinate Error Overlay if coordinates missing or invalid */}
+      {coordinateError && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-white/95 z-30 font-mono">
+          <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 mb-3 shadow-xs">
+            <AlertCircle className="w-6 h-6 text-amber-600" />
+          </div>
+          <h3 className="text-sm font-bold text-[#0F172A] mb-1 uppercase tracking-wider">Coordinates Unavailable</h3>
+          <p className="text-xs text-slate-500 max-w-sm">{coordinateError}</p>
+        </div>
+      )}
+
       {/* Hover & Active Selection Diagnostics Floating Card */}
       {(hoveredResidue || selectedResidueData) && (
-        <div className="absolute bottom-4 left-4 max-w-sm bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-xl p-3 text-xs font-mono text-slate-200 shadow-2xl z-20 space-y-1.5 pointer-events-none">
+        <div className="absolute bottom-4 left-4 max-w-sm bg-white/95 backdrop-blur-md border border-[#CBD5E1] rounded-xl p-3 text-xs font-mono text-[#0F172A] shadow-xl z-20 space-y-1.5 pointer-events-none">
           <div className="flex items-center justify-between gap-2">
-            <span className="font-bold text-white text-sm">
+            <span className="font-bold text-[#0F172A] text-sm">
               {(hoveredResidue || selectedResidueData)?.name} #{(hoveredResidue || selectedResidueData)?.resSeq} (Chain {(hoveredResidue || selectedResidueData)?.chainId})
             </span>
             {(hoveredResidue || selectedResidueData)?.isMutated && (
-              <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
+              <span className="px-1.5 py-0.2 rounded bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-bold">
                 {(hoveredResidue || selectedResidueData)?.mutationLabel || 'MUTATION'}
               </span>
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-400">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-600">
             <div>
-              Conformation: <strong className="text-slate-200 capitalize">{(hoveredResidue || selectedResidueData)?.secondaryStructure || 'Loop'}</strong>
+              Conformation: <strong className="text-[#0F172A] capitalize">{(hoveredResidue || selectedResidueData)?.secondaryStructure || 'Loop'}</strong>
             </div>
             <div>
-              pLDDT / B-Factor: <strong className="text-emerald-400">{(hoveredResidue || selectedResidueData)?.pLddt ?? (hoveredResidue || selectedResidueData)?.bFactorAvg}</strong>
+              pLDDT / B-Factor: <strong className="text-emerald-600 font-bold">{(hoveredResidue || selectedResidueData)?.pLddt ?? (hoveredResidue || selectedResidueData)?.bFactorAvg}</strong>
             </div>
             {(hoveredResidue || selectedResidueData)?.phi !== undefined && (
               <div>
-                Φ: <strong className="text-purple-300">{(hoveredResidue || selectedResidueData)?.phi}°</strong>
+                Φ: <strong className="text-purple-700">{(hoveredResidue || selectedResidueData)?.phi}°</strong>
               </div>
             )}
             {(hoveredResidue || selectedResidueData)?.psi !== undefined && (
               <div>
-                Ψ: <strong className="text-purple-300">{(hoveredResidue || selectedResidueData)?.psi}°</strong>
+                Ψ: <strong className="text-purple-700">{(hoveredResidue || selectedResidueData)?.psi}°</strong>
               </div>
             )}
           </div>
@@ -793,25 +1176,25 @@ export const Scientific3DStructureViewer: React.FC<Scientific3DStructureViewerPr
       )}
 
       {/* Bottom Color Scheme Guide Legend */}
-      <div className="bg-[#0B0F17]/80 backdrop-blur-xs border-t border-slate-800/80 px-4 py-2 flex items-center justify-between flex-wrap gap-2 text-[11px] font-mono text-slate-400 z-10">
+      <div className="bg-white/90 backdrop-blur-xs border-t border-[#E2E8F0] px-4 py-2 flex items-center justify-between flex-wrap gap-2 text-[11px] font-mono text-slate-600 z-10">
         <div className="flex items-center gap-3">
-          <span className="text-slate-500 uppercase font-bold text-[10px]">Active Legend:</span>
+          <span className="text-slate-400 uppercase font-bold text-[10px]">Legend:</span>
           {colorScheme === 'secondary_structure' && (
             <>
               <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-fuchsia-500" /> α-Helix</span>
               <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-400" /> β-Sheet</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-cyan-400" /> Loop / Coil</span>
+              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-sky-500" /> Loop / Coil</span>
             </>
           )}
           {colorScheme === 'mutation_delta' && (
             <>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" /> Modified Residue</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-600" /> Unaltered Scaffold</span>
+              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse" /> Modified Residue</span>
+              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400" /> Unaltered Scaffold</span>
             </>
           )}
           {colorScheme === 'plddt_bfactor' && (
             <>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-blue-700" /> &gt;90 (Very High)</span>
+              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-blue-700" /> &gt;90 (High)</span>
               <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-sky-400" /> 70-90 (Confident)</span>
               <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-yellow-400" /> 50-70 (Low)</span>
               <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-orange-500" /> &lt;50 (Very Low)</span>
@@ -820,7 +1203,7 @@ export const Scientific3DStructureViewer: React.FC<Scientific3DStructureViewerPr
         </div>
 
         <div className="text-[10px] text-slate-500">
-          Left-Click: Rotate | Right-Click: Pan | Scroll: Zoom | Click: Inspect
+          Rotate: Drag | Pan: Right-Click or Shift+Drag | Zoom: Scroll | Reset: Double-Click
         </div>
       </div>
     </div>

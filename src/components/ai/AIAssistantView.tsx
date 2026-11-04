@@ -54,17 +54,35 @@ export const AIAssistantView: React.FC<AIAssistantViewProps> = ({
   const [isContextExpanded, setIsContextExpanded] = useState<boolean>(true);
   const [isHistorySidebarOpen, setIsHistorySidebarOpen] = useState<boolean>(false);
 
-  const [lastModelUsed, setLastModelUsed] = useState<string>('gemini-3.7-flash');
+  const [primaryConfiguredModel, setPrimaryConfiguredModel] = useState<string>('gemini-3.1-flash-lite');
+  const [lastModelUsed, setLastModelUsed] = useState<string>('gemini-3.1-flash-lite');
 
   const formatModelDisplayName = (modelId: string) => {
-    if (!modelId || modelId === 'gemini-3.7-flash') return 'Gemini 3.7 Flash';
-    if (modelId === 'gemini-3.1-flash-lite') return 'Gemini 3.1 Flash Lite (Fallback)';
+    if (!modelId) return 'Gemini';
+    if (modelId === 'gemini-3.1-flash-lite') return 'Gemini 3.1 Flash Lite';
+    if (modelId === 'gemini-flash-lite-latest') return 'Gemini Flash Lite (Latest)';
+    if (modelId === 'gemini-3.5-flash-lite') return 'Gemini 3.5 Flash Lite';
+    if (modelId === 'gemini-3.8-flash') return 'Gemini 3.8 Flash';
     if (modelId === 'gemini-3.6-flash') return 'Gemini 3.6 Flash';
-    return modelId;
+    return modelId.replace('models/', '');
   };
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isGeneratingRef = useRef<boolean>(false);
+
+  // Fetch actual backend model configuration on mount
+  useEffect(() => {
+    let isMounted = true;
+    aiService.getAiConfig().then((cfg) => {
+      if (isMounted && cfg?.primaryModel) {
+        setPrimaryConfiguredModel(cfg.primaryModel);
+        setLastModelUsed(cfg.primaryModel);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // React to activeContext changes (e.g. when opened from sequence workbench or project detail)
   useEffect(() => {
@@ -264,6 +282,9 @@ How can I help you interpret these saved results?`;
       setMessages((prev) => [...prev, aiMsg]);
     } catch (err: any) {
       console.error('[BioAI Generation Error]', err);
+      if (err?.modelUsed) {
+        setLastModelUsed(err.modelUsed);
+      }
       setErrorMessage(
         err?.message || 'Failed to generate AI response. Please verify network connectivity.'
       );
@@ -315,6 +336,9 @@ How can I help you interpret these saved results?`;
       setMessages((prev) => [...prev, aiMsg]);
     } catch (err: any) {
       console.error('[BioAI Retry Error]', err);
+      if (err?.modelUsed) {
+        setLastModelUsed(err.modelUsed);
+      }
       setErrorMessage(
         err?.message || 'Failed to generate AI response. Please verify network connectivity.'
       );
@@ -841,7 +865,7 @@ How can I help you interpret these saved results?`;
             <span>Grounding: Strict BioCode Studio Context Validation</span>
             <div className="flex items-center gap-2">
               <span className="text-emerald-700 font-medium">Model: {lastModelUsed}</span>
-              {lastModelUsed === 'gemini-3.1-flash-lite' && (
+              {lastModelUsed !== primaryConfiguredModel && (
                 <span className="px-1.5 py-0.5 rounded text-[9px] bg-amber-50 text-amber-700 border border-amber-200">
                   Fallback Active
                 </span>

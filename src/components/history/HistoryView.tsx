@@ -12,13 +12,16 @@ import {
   HardDrive,
   RefreshCw,
   Code,
-  ArrowRight
+  ArrowRight,
+  FileText,
+  Download
 } from 'lucide-react';
 import { AnalysisRecord, SchemaHealthStatus, formatOrganism } from '../../types';
 import { bioService } from '../../services/bioService';
 import { isSupabaseConfigured } from '../../lib/supabase/client';
 import { SqlMigrationModal } from '../database/SqlMigrationModal';
 import { AnalysisDetailView } from './AnalysisDetailView';
+import { generateAnalysisReportPdf, generateBatchSummaryReportPdf } from '../../services/pdfReportService';
 
 interface HistoryViewProps {
   user: any;
@@ -46,6 +49,8 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   const [isMigrationModalOpen, setIsMigrationModalOpen] = useState<boolean>(false);
   const [selectedAnalysisId, setSelectedAnalysisId] = useState<string | null>(initialAnalysisId);
   const [currentPage, setCurrentPage] = useState<number>(1);
+  const [generatingPdfId, setGeneratingPdfId] = useState<string | null>(null);
+  const [isExportingSummary, setIsExportingSummary] = useState<boolean>(false);
   const PAGE_SIZE = 15;
 
   useEffect(() => {
@@ -117,6 +122,41 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
     }
   };
 
+  const handleExportRecordPdf = async (record: AnalysisRecord, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setGeneratingPdfId(record.id);
+    try {
+      let fullRecord = record;
+      // If sequence or biological results are not fully loaded in this list record, fetch detailed record
+      if (!record.sequence_record?.sequence && !record.results?.dnaAnalysis && !record.results?.proteinAnalysis) {
+        const detailed = await bioService.getAnalysisById(record.id, user?.id);
+        if (detailed) {
+          fullRecord = detailed;
+        }
+      }
+      await generateAnalysisReportPdf(fullRecord);
+    } catch (err) {
+      console.error('Failed to generate PDF report:', err);
+    } finally {
+      setGeneratingPdfId(null);
+    }
+  };
+
+  const handleExportSummaryPdf = async () => {
+    if (filteredAnalyses.length === 0) return;
+    setIsExportingSummary(true);
+    try {
+      await generateBatchSummaryReportPdf(
+        filteredAnalyses,
+        `BioCode Studio — Analysis Audit History (${filteredAnalyses.length} Records)`
+      );
+    } catch (err) {
+      console.error('Failed to export summary PDF:', err);
+    } finally {
+      setIsExportingSummary(false);
+    }
+  };
+
   // If a record is selected, display the detailed analysis record view
   if (selectedAnalysisId) {
     return (
@@ -159,6 +199,20 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         </div>
 
         <div className="flex items-center gap-3">
+          <button
+            onClick={handleExportSummaryPdf}
+            disabled={isExportingSummary || filteredAnalyses.length === 0}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-[#F1F5F9] border border-[#CBD5E1] text-xs text-[#0284C7] font-mono font-medium transition-all disabled:opacity-50 cursor-pointer shadow-xs"
+            title="Export filtered records as a multi-record summary PDF report"
+          >
+            {isExportingSummary ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0284C7]" />
+            ) : (
+              <FileText className="w-3.5 h-3.5 text-[#0284C7]" />
+            )}
+            <span>{isExportingSummary ? 'Exporting...' : 'Export Audit PDF'}</span>
+          </button>
+
           <button
             onClick={() => setIsMigrationModalOpen(true)}
             className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#F1F5F9] hover:bg-[#E2E8F0] border border-[#CBD5E1] text-xs text-[#334155] font-mono font-medium transition-all cursor-pointer shadow-xs"
@@ -392,17 +446,35 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       </td>
 
                       <td className="p-4 text-right">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleOpenDetail(record.id);
-                          }}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-50 group-hover:bg-sky-100 border border-sky-200 text-[#0284C7] text-xs font-mono font-semibold transition-all cursor-pointer shadow-2xs"
-                        >
-                          <span>View</span>
-                          <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
-                        </button>
+                        <div className="inline-flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={(e) => handleExportRecordPdf(record, e)}
+                            disabled={generatingPdfId === record.id}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white hover:bg-[#F1F5F9] border border-[#CBD5E1] text-[#0284C7] hover:text-[#0369a1] text-xs font-mono font-medium transition-all cursor-pointer shadow-2xs disabled:opacity-50"
+                            title="Export comprehensive scientific PDF report for this analysis"
+                          >
+                            {generatingPdfId === record.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0284C7]" />
+                            ) : (
+                              <FileText className="w-3.5 h-3.5 text-[#0284C7]" />
+                            )}
+                            <span className="hidden sm:inline">{generatingPdfId === record.id ? 'Exporting...' : 'PDF Report'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenDetail(record.id);
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-50 group-hover:bg-sky-100 border border-sky-200 text-[#0284C7] text-xs font-mono font-semibold transition-all cursor-pointer shadow-2xs"
+                            title="Inspect full details, sequence, and statistics"
+                          >
+                            <span>View</span>
+                            <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

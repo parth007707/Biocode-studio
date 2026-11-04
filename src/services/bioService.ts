@@ -958,6 +958,28 @@ export const bioService = {
     }
   },
 
+  async deleteSequenceRecord(sequenceId: string): Promise<boolean> {
+    if (!sequenceId) throw new Error('Sequence ID is required.');
+
+    if (isSupabaseConfigured) {
+      const { error } = await supabase
+        .from('sequence_records')
+        .delete()
+        .eq('id', sequenceId);
+
+      if (error) throw new Error(error.message || 'Failed to delete sequence record.');
+    }
+
+    try {
+      const local = getLocalItem('biocode_sequence_records', '[]');
+      const list = JSON.parse(local).filter((s: any) => s.id !== sequenceId);
+      setLocalItem('biocode_sequence_records', JSON.stringify(list));
+    } catch {}
+
+    requestManager.invalidateCache();
+    return true;
+  },
+
   /**
    * Analyses Service
    * Unified persistence & audit log query that fetches real Supabase records from both
@@ -1451,6 +1473,28 @@ export const bioService = {
     }
   },
 
+  async deleteAnalysis(analysisId: string): Promise<boolean> {
+    if (!analysisId) throw new Error('Analysis ID is required.');
+
+    if (isSupabaseConfigured) {
+      const { error } = await supabase
+        .from('analyses')
+        .delete()
+        .eq('id', analysisId);
+
+      if (error) throw new Error(error.message || 'Failed to delete analysis record.');
+    }
+
+    try {
+      const local = getLocalItem('biocode_analyses', '[]');
+      const list = JSON.parse(local).filter((a: any) => a.id !== analysisId);
+      setLocalItem('biocode_analyses', JSON.stringify(list));
+    } catch {}
+
+    requestManager.invalidateCache();
+    return true;
+  },
+
   /**
    * Projects Service
    */
@@ -1761,6 +1805,28 @@ export const bioService = {
 
   async archiveProject(projectId: string): Promise<Project> {
     return this.updateProject(projectId, { status: 'Archived' });
+  },
+
+  async deleteProject(projectId: string): Promise<boolean> {
+    if (!projectId) throw new Error('Project ID is required.');
+
+    if (isSupabaseConfigured) {
+      const { error } = await supabase
+        .from('projects')
+        .delete()
+        .eq('id', projectId);
+
+      if (error) throw new Error(error.message || 'Failed to delete project.');
+    }
+
+    try {
+      const local = getLocalItem('biocode_projects', '[]');
+      const list = JSON.parse(local).filter((p: any) => p.id !== projectId);
+      setLocalItem('biocode_projects', JSON.stringify(list));
+    } catch {}
+
+    requestManager.invalidateCache();
+    return true;
   },
 
   async getProjectSequences(projectId: string): Promise<SequenceRecord[]> {
