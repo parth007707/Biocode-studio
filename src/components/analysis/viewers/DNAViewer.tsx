@@ -150,11 +150,11 @@ export const DNAViewer: React.FC<DNAViewerProps> = ({
     const height = container.clientHeight || 460;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xf0f9ff);
+    scene.background = new THREE.Color(0x070d18);
     sceneRef.current = scene;
 
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
-    const targetZ = Math.max(30, Math.min(seqLength, 120) * 0.75 + 18);
+    const targetZ = Math.max(30, Math.min(seqLength, 120) * 0.75 + 20);
     camera.position.set(0, 0, targetZ);
     cameraRef.current = camera;
 
@@ -169,38 +169,57 @@ export const DNAViewer: React.FC<DNAViewerProps> = ({
     }
     container.appendChild(renderer.domElement);
 
-    // Studio Biological Lighting
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.95);
+    // Studio Biological 4-Point Lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
     scene.add(ambientLight);
 
-    const dirLight1 = new THREE.DirectionalLight(0xffffff, 1.3);
-    dirLight1.position.set(20, 40, 30);
+    const dirLight1 = new THREE.DirectionalLight(0xffffff, 1.6);
+    dirLight1.position.set(25, 45, 35);
     scene.add(dirLight1);
 
-    const dirLight2 = new THREE.DirectionalLight(0x38bdf8, 0.8);
-    dirLight2.position.set(-20, -30, -20);
+    const dirLight2 = new THREE.DirectionalLight(0x38bdf8, 0.9);
+    dirLight2.position.set(-25, -30, -25);
     scene.add(dirLight2);
 
-    const pointLight = new THREE.PointLight(0x10b981, 1.0, 90);
-    pointLight.position.set(0, 0, 15);
+    const pointLight = new THREE.PointLight(0x06b6d4, 1.0, 90);
+    pointLight.position.set(0, 0, 18);
     scene.add(pointLight);
 
-    // Build 3D Double Helix
+    // Build Authentic 3D Ball-and-Stick B-DNA Molecular Structure
     const rootGroup = new THREE.Group();
     groupRef.current = rootGroup;
     scene.add(rootGroup);
 
     const numBases3D = Math.min(seqLength, 120);
-    const bpPitch = 1.1;
-    const helixRadius = 4.2;
-    const anglePerBp = 0.60;
-    const minorGrooveShift = 2.2;
+    const bpPitch = 1.6;
+    const helixRadius = 5.2;
+    const anglePerBp = 0.628; // ~36 degrees per base pair (10 bp/turn)
+    const minorGrooveShift = 2.4;
 
-    const strand1Points: THREE.Vector3[] = [];
-    const strand2Points: THREE.Vector3[] = [];
+    const phosphateSphereGeo = new THREE.SphereGeometry(0.48, 14, 14);
+    const sugarSphereGeo = new THREE.SphereGeometry(0.40, 14, 14);
+    const baseSphereGeo = new THREE.SphereGeometry(0.46, 14, 14);
+    const bondCylinderGeo = new THREE.CylinderGeometry(0.12, 0.12, 1, 8);
+    const hbCylinderGeo = new THREE.CylinderGeometry(0.08, 0.08, 1, 6);
 
-    const sphereGeo = new THREE.SphereGeometry(0.55, 14, 14);
-    const bondCylinderGeo = new THREE.CylinderGeometry(0.18, 0.18, 1, 10);
+    const phosphateMat = new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.3, metalness: 0.2 }); // Orange (P)
+    const sugarMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.35, metalness: 0.15 }); // Slate (C4'/Sugar)
+    const bondMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.4 });
+    const hBondMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.3, transparent: true, opacity: 0.75 });
+
+    const prevStrand1P: THREE.Vector3[] = [];
+    const prevStrand2P: THREE.Vector3[] = [];
+
+    const addCylinderBetween = (v1: THREE.Vector3, v2: THREE.Vector3, geo: THREE.BufferGeometry, mat: THREE.Material) => {
+      const mid = new THREE.Vector3().addVectors(v1, v2).multiplyScalar(0.5);
+      const dist = v1.distanceTo(v2);
+      if (dist < 0.01) return;
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.copy(mid);
+      mesh.scale.set(1, dist, 1);
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(v2, v1).normalize());
+      rootGroup.add(mesh);
+    };
 
     for (let i = 0; i < numBases3D; i++) {
       const b1 = cleanSeq[i];
@@ -210,70 +229,68 @@ export const DNAViewer: React.FC<DNAViewerProps> = ({
       const angle1 = i * anglePerBp;
       const angle2 = angle1 + Math.PI + (minorGrooveShift - Math.PI / 2);
 
-      const p1 = new THREE.Vector3(Math.cos(angle1) * helixRadius, y, Math.sin(angle1) * helixRadius);
-      const p2 = new THREE.Vector3(Math.cos(angle2) * helixRadius, y, Math.sin(angle2) * helixRadius);
+      // Strand 1: Phosphate (outer), Sugar C4' (mid), Base (core)
+      const p1_p = new THREE.Vector3(Math.cos(angle1) * (helixRadius + 1.2), y, Math.sin(angle1) * (helixRadius + 1.2));
+      const p1_sugar = new THREE.Vector3(Math.cos(angle1 + 0.15) * helixRadius, y + 0.3, Math.sin(angle1 + 0.15) * helixRadius);
+      const p1_base = new THREE.Vector3(Math.cos(angle1 + 0.35) * (helixRadius * 0.45), y + 0.1, Math.sin(angle1 + 0.35) * (helixRadius * 0.45));
 
-      strand1Points.push(p1);
-      strand2Points.push(p2);
+      // Strand 2 (Anti-parallel): Phosphate (outer), Sugar C4' (mid), Base (core)
+      const p2_p = new THREE.Vector3(Math.cos(angle2) * (helixRadius + 1.2), y, Math.sin(angle2) * (helixRadius + 1.2));
+      const p2_sugar = new THREE.Vector3(Math.cos(angle2 + 0.15) * helixRadius, y - 0.3, Math.sin(angle2 + 0.15) * helixRadius);
+      const p2_base = new THREE.Vector3(Math.cos(angle2 + 0.35) * (helixRadius * 0.45), y - 0.1, Math.sin(angle2 + 0.35) * (helixRadius * 0.45));
 
-      const nodeMat1 = new THREE.MeshStandardMaterial({
-        color: colorMode === 'strand' ? 0x10b981 : 0x0284c7,
-        roughness: 0.25,
-        metalness: 0.2
-      });
-      const nodeMat2 = new THREE.MeshStandardMaterial({
-        color: colorMode === 'strand' ? 0x06b6d4 : 0x8b5cf6,
-        roughness: 0.25,
-        metalness: 0.2
-      });
+      // Spheres for Strand 1
+      const p1PhosMesh = new THREE.Mesh(phosphateSphereGeo, phosphateMat);
+      p1PhosMesh.position.copy(p1_p);
+      rootGroup.add(p1PhosMesh);
 
-      const node1 = new THREE.Mesh(sphereGeo, nodeMat1);
-      node1.position.copy(p1);
-      rootGroup.add(node1);
+      const p1SugarMesh = new THREE.Mesh(sugarSphereGeo, sugarMat);
+      p1SugarMesh.position.copy(p1_sugar);
+      rootGroup.add(p1SugarMesh);
 
-      const node2 = new THREE.Mesh(sphereGeo, nodeMat2);
-      node2.position.copy(p2);
-      rootGroup.add(node2);
+      const b1Color = BASE_COLORS[b1]?.hex || 0x64748b;
+      const b1Mat = new THREE.MeshStandardMaterial({ color: b1Color, roughness: 0.25, metalness: 0.2 });
+      const p1BaseMesh = new THREE.Mesh(baseSphereGeo, b1Mat);
+      p1BaseMesh.position.copy(p1_base);
+      rootGroup.add(p1BaseMesh);
 
-      const midPoint = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
-      const color1 = colorMode === 'base' ? (BASE_COLORS[b1]?.hex || 0x64748b) : 0x10b981;
-      const color2 = colorMode === 'base' ? (BASE_COLORS[b2]?.hex || 0x64748b) : 0x06b6d4;
+      // Spheres for Strand 2
+      const p2PhosMesh = new THREE.Mesh(phosphateSphereGeo, phosphateMat);
+      p2PhosMesh.position.copy(p2_p);
+      rootGroup.add(p2PhosMesh);
 
-      const mat1 = new THREE.MeshStandardMaterial({ color: color1, roughness: 0.3, metalness: 0.2 });
-      const dist1 = p1.distanceTo(midPoint);
-      const rung1 = new THREE.Mesh(bondCylinderGeo, mat1);
-      rung1.scale.set(1, dist1, 1);
-      rung1.position.copy(new THREE.Vector3().addVectors(p1, midPoint).multiplyScalar(0.5));
-      rung1.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(midPoint, p1).normalize());
-      rootGroup.add(rung1);
+      const p2SugarMesh = new THREE.Mesh(sugarSphereGeo, sugarMat);
+      p2SugarMesh.position.copy(p2_sugar);
+      rootGroup.add(p2SugarMesh);
 
-      const mat2 = new THREE.MeshStandardMaterial({ color: color2, roughness: 0.3, metalness: 0.2 });
-      const dist2 = midPoint.distanceTo(p2);
-      const rung2 = new THREE.Mesh(bondCylinderGeo, mat2);
-      rung2.scale.set(1, dist2, 1);
-      rung2.position.copy(new THREE.Vector3().addVectors(midPoint, p2).multiplyScalar(0.5));
-      rung2.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3().subVectors(p2, midPoint).normalize());
-      rootGroup.add(rung2);
-    }
+      const b2Color = BASE_COLORS[b2]?.hex || 0x64748b;
+      const b2Mat = new THREE.MeshStandardMaterial({ color: b2Color, roughness: 0.25, metalness: 0.2 });
+      const p2BaseMesh = new THREE.Mesh(baseSphereGeo, b2Mat);
+      p2BaseMesh.position.copy(p2_base);
+      rootGroup.add(p2BaseMesh);
 
-    if (strand1Points.length > 1) {
-      const curve1 = new THREE.CatmullRomCurve3(strand1Points);
-      const tubeGeo1 = new THREE.TubeGeometry(curve1, numBases3D * 3, 0.25, 8, false);
-      const tubeMat1 = new THREE.MeshStandardMaterial({
-        color: colorMode === 'strand' ? 0x059669 : 0x0284c7,
-        roughness: 0.25,
-        metalness: 0.2
-      });
-      rootGroup.add(new THREE.Mesh(tubeGeo1, tubeMat1));
+      // Intramolecular Covalent Bonds: Phosphate -> Sugar -> Base
+      addCylinderBetween(p1_p, p1_sugar, bondCylinderGeo, bondMat);
+      addCylinderBetween(p1_sugar, p1_base, bondCylinderGeo, bondMat);
 
-      const curve2 = new THREE.CatmullRomCurve3(strand2Points);
-      const tubeGeo2 = new THREE.TubeGeometry(curve2, numBases3D * 3, 0.25, 8, false);
-      const tubeMat2 = new THREE.MeshStandardMaterial({
-        color: colorMode === 'strand' ? 0x0891b2 : 0x7c3aed,
-        roughness: 0.25,
-        metalness: 0.2
-      });
-      rootGroup.add(new THREE.Mesh(tubeGeo2, tubeMat2));
+      addCylinderBetween(p2_p, p2_sugar, bondCylinderGeo, bondMat);
+      addCylinderBetween(p2_sugar, p2_base, bondCylinderGeo, bondMat);
+
+      // Inter-strand Hydrogen Bonds between Base Pairs across Helix Core
+      addCylinderBetween(p1_base, p2_base, hbCylinderGeo, hBondMat);
+
+      // Phosphodiester Backbone linkages connecting adjacent nucleotides
+      if (prevStrand1P.length > 0) {
+        const lastP1 = prevStrand1P[prevStrand1P.length - 1];
+        addCylinderBetween(lastP1, p1_p, bondCylinderGeo, bondMat);
+      }
+      prevStrand1P.push(p1_p);
+
+      if (prevStrand2P.length > 0) {
+        const lastP2 = prevStrand2P[prevStrand2P.length - 1];
+        addCylinderBetween(lastP2, p2_p, bondCylinderGeo, bondMat);
+      }
+      prevStrand2P.push(p2_p);
     }
 
     rootGroup.rotation.x = 0.2;

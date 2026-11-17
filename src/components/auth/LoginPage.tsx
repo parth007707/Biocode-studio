@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Dna, Mail, Lock, User, Eye, EyeOff, AlertCircle, CheckCircle2, ArrowRight, ShieldCheck, Sparkles } from 'lucide-react';
+import { Dna, Mail, KeyRound, Lock, User, Eye, EyeOff, AlertCircle, CheckCircle2, ArrowRight, ShieldCheck, Sparkles } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase/client';
 
 interface LoginPageProps {
@@ -14,7 +14,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   initialMode = 'signin'
 }) => {
   const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>(initialMode);
+  // OTP flow stages when mode === 'forgot': 'email' -> 'otp' -> 'password'
+  const [forgotStep, setForgotStep] = useState<'email' | 'otp' | 'password'>('email');
   const [email, setEmail] = useState<string>('');
+  const [otpToken, setOtpToken] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [confirmPassword, setConfirmPassword] = useState<string>('');
   const [fullName, setFullName] = useState<string>('');
@@ -23,6 +26,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const [loading, setLoading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  const resetState = () => {
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    setPassword('');
+    setConfirmPassword('');
+    setOtpToken('');
+    setForgotStep('email');
+  };
 
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,6 +52,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       return;
     }
 
+    // SIGNUP VALIDATION
     if (mode === 'signup') {
       if (!password || password.length < 6) {
         setErrorMsg('Password must be at least 6 characters long.');
@@ -75,8 +88,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
         let activeSession = signUpData?.session;
 
-        // If signUp succeeded but no session was returned (e.g. Email Confirmation enabled in Supabase),
-        // attempt immediate signInWithPassword to obtain an active session
+        // If signUp succeeded but no session was returned, attempt immediate signInWithPassword
         if (!activeSession) {
           const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
             email: normalizedEmail,
@@ -88,9 +100,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           }
         }
 
-        // Verify active session exists
         if (activeSession && activeSession.user) {
-          // Create or update user profile without duplicates
           try {
             await supabase.from('profiles').upsert(
               {
@@ -123,7 +133,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         if (signInError) throw signInError;
 
         if (signInData?.session && signInData.session.user) {
-          // Sync profile on sign in
           try {
             await supabase.from('profiles').upsert(
               {
@@ -146,39 +155,67 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           setErrorMsg('Sign in completed but no active session was returned. Please check your credentials.');
         }
       } else if (mode === 'forgot') {
-        if (!password || password.length < 6) {
-          setErrorMsg('New password must be at least 6 characters long.');
-          return;
-        }
-        if (password !== confirmPassword) {
-          setErrorMsg('Passwords do not match. Please verify both password entries.');
-          return;
-        }
-
-        // Check if a verified recovery session is present
-        const { data: { session } } = await supabase.auth.getSession();
-
-        if (session && session.user) {
-          const { error } = await supabase.auth.updateUser({ password });
+        // STEP 1: Send OTP
+        if (forgotStep === 'email') {
+          const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail);
           if (error) throw error;
 
-          setSuccessMsg('Password updated successfully! Redirecting to sign in...');
-          setTimeout(() => {
-            setMode('signin');
-            setPassword('');
-            setConfirmPassword('');
-            setSuccessMsg(null);
-          }, 1200);
-        } else {
-          const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
-            redirectTo: `${window.location.origin}/reset-password`
+          setForgotStep('otp');
+          setSuccessMsg(`Verification code sent to ${normalizedEmail}. Please enter the 6-digit code below.`);
+        } 
+        // STEP 2: Verify OTP
+        else if (forgotStep === 'otp') {
+          const token = otpToken.trim();
+          if (!token || token.length < 6) {
+            setErrorMsg('Please enter the 6-digit verification code.');
+            return;
+          }
+
+          const { data, error } = await supabase.auth.verifyOtp({
+            email: normalizedEmail,
+            token,
+            type: 'recovery',
           });
 
           if (error) throw error;
 
-          setSuccessMsg(
-            `Identity verification required. A secure password recovery link has been sent to ${normalizedEmail}. Please check your inbox and click the verification link to verify your identity and complete your password update.`
-          );
+          if (data?.session) {
+            setForgotStep('password');
+            setSuccessMsg('Code verified successfully. Please enter your new password.');
+          } else {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session) {
+              setForgotStep('password');
+              setSuccessMsg('Code verified successfully. Please enter your new password.');
+            } else {
+              setErrorMsg('Invalid or expired verification code. Please request a new code.');
+            }
+          }
+        } 
+        // STEP 3: Change Password
+        else if (forgotStep === 'password') {
+          if (!password || password.length < 6) {
+            setErrorMsg('New password must be at least 6 characters long.');
+            return;
+          }
+          if (password !== confirmPassword) {
+            setErrorMsg('Passwords do not match. Please verify both password entries.');
+            return;
+          }
+
+          const { data: { session } } = await supabase.auth.getSession();
+          if (!session) {
+            throw new Error('Recovery session expired. Please restart the password recovery process.');
+          }
+
+          const { error } = await supabase.auth.updateUser({ password });
+          if (error) throw error;
+
+          setSuccessMsg('Password changed successfully! Redirecting to Sign In...');
+          setTimeout(() => {
+            setMode('signin');
+            resetState();
+          }, 1500);
         }
       }
     } catch (err: any) {
@@ -191,8 +228,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         setErrorMsg('An account with this email address already exists. Please sign in instead.');
       } else if (rawMsg.includes('Password should be at least')) {
         setErrorMsg('Password must be at least 6 characters long.');
-      } else if (rawMsg.includes('Email rate limit exceeded')) {
-        setErrorMsg('Too many authentication requests. Please wait a few minutes before trying again.');
+      } else if (rawMsg.includes('Email rate limit exceeded') || rawMsg.includes('rate limit')) {
+        setErrorMsg('Too many recovery attempts. Please wait a few minutes before trying again.');
+      } else if (rawMsg.includes('expired') || rawMsg.includes('invalid') || rawMsg.includes('Token')) {
+        setErrorMsg('Invalid or expired verification code. Please check your code or request a new one.');
       } else {
         setErrorMsg(rawMsg || 'Authentication request failed. Please check your network and credentials.');
       }
@@ -217,18 +256,22 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           </div>
           <div>
             <h1 className="text-xl sm:text-2xl font-bold font-display text-[#0F172A] tracking-tight">
-              {mode === 'signup'
-                ? 'Create BioCode Account'
-                : mode === 'forgot'
-                ? 'Reset Password'
-                : 'Sign in to BioCode Studio'}
+              {mode === 'signup' && 'Create BioCode Account'}
+              {mode === 'signin' && 'Sign in to BioCode Studio'}
+              {mode === 'forgot' && (
+                forgotStep === 'email' ? 'Forgot Password' :
+                forgotStep === 'otp' ? 'Verify Security Code' :
+                'Change Password'
+              )}
             </h1>
             <p className="text-xs text-[#64748B] mt-1 font-sans">
-              {mode === 'signup'
-                ? 'Register for cloud sequence persistence and workspace collaboration.'
-                : mode === 'forgot'
-                ? 'Enter your email address and new password to reset your account password.'
-                : 'Access your genomic analyses, mutation records, and 3D structure data.'}
+              {mode === 'signup' && 'Register for cloud sequence persistence and workspace collaboration.'}
+              {mode === 'signin' && 'Access your genomic analyses, mutation records, and 3D structure data.'}
+              {mode === 'forgot' && (
+                forgotStep === 'email' ? 'Enter your registered email address to receive a secure verification code.' :
+                forgotStep === 'otp' ? `Enter the 6-digit code sent to ${email}` :
+                'Enter your new password below to secure your account.'
+              )}
             </p>
           </div>
 
@@ -236,7 +279,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           <div className="flex items-center justify-center gap-1 bg-[#F1F5F9] p-1 rounded-xl text-xs font-mono border border-[#E2E8F0] mt-3">
             <button
               type="button"
-              onClick={() => { setMode('signin'); setErrorMsg(null); setSuccessMsg(null); }}
+              onClick={() => { setMode('signin'); resetState(); }}
               className={`flex-1 py-1.5 rounded-lg transition-all font-semibold cursor-pointer ${
                 mode === 'signin' ? 'bg-white text-[#0284C7] shadow-xs border border-[#CBD5E1]' : 'text-[#64748B] hover:text-[#0F172A]'
               }`}
@@ -245,7 +288,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => { setMode('signup'); setErrorMsg(null); setSuccessMsg(null); }}
+              onClick={() => { setMode('signup'); resetState(); }}
               className={`flex-1 py-1.5 rounded-lg transition-all font-semibold cursor-pointer ${
                 mode === 'signup' ? 'bg-white text-[#0284C7] shadow-xs border border-[#CBD5E1]' : 'text-[#64748B] hover:text-[#0F172A]'
               }`}
@@ -254,12 +297,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => { setMode('forgot'); setErrorMsg(null); setSuccessMsg(null); }}
+              onClick={() => { setMode('forgot'); resetState(); }}
               className={`flex-1 py-1.5 rounded-lg transition-all font-semibold cursor-pointer ${
                 mode === 'forgot' ? 'bg-white text-[#0284C7] shadow-xs border border-[#CBD5E1]' : 'text-[#64748B] hover:text-[#0F172A]'
               }`}
             >
-              Reset
+              Recover
             </button>
           </div>
         </div>
@@ -299,62 +342,85 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             </div>
           )}
 
-          {/* Email Input */}
-          <div className="space-y-1.5">
-            <label className="block text-xs font-semibold text-[#334155]">Email Address</label>
-            <div className="relative">
-              <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="researcher@biocode.io"
-                className="w-full bg-white border border-[#CBD5E1] rounded-xl pl-10 pr-4 py-2.5 text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#38BDF8] focus:ring-2 focus:ring-[#38BDF8]/20 font-mono shadow-2xs"
-              />
+          {/* Email Input (Visible in signin, signup, and forgot step 'email') */}
+          {(mode !== 'forgot' || forgotStep === 'email') && (
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold text-[#334155]">Email Address</label>
+              <div className="relative">
+                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
+                <input
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="researcher@biocode.io"
+                  className="w-full bg-white border border-[#CBD5E1] rounded-xl pl-10 pr-4 py-2.5 text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#38BDF8] focus:ring-2 focus:ring-[#38BDF8]/20 font-mono shadow-2xs"
+                />
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* Password Input (Sign In, Sign Up, and Reset Password Modes) */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label className="block text-xs font-semibold text-[#334155]">
-                {mode === 'forgot' ? 'New Password' : 'Password'}
-              </label>
-              {mode === 'signin' && (
+          {/* OTP Code Input (Only in forgot step 'otp') */}
+          {mode === 'forgot' && forgotStep === 'otp' && (
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold text-[#334155]">6-Digit Security Code (OTP)</label>
+              <div className="relative">
+                <KeyRound className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
+                <input
+                  type="text"
+                  required
+                  maxLength={10}
+                  value={otpToken}
+                  onChange={(e) => setOtpToken(e.target.value)}
+                  placeholder="123456"
+                  className="w-full bg-white border border-[#CBD5E1] rounded-xl pl-10 pr-4 py-2.5 text-sm tracking-widest text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#38BDF8] focus:ring-2 focus:ring-[#38BDF8]/20 font-mono shadow-2xs text-center"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Password Input (Sign In, Sign Up, or forgot step 'password') */}
+          {(mode !== 'forgot' || forgotStep === 'password') && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-semibold text-[#334155]">
+                  {mode === 'forgot' ? 'New Password' : 'Password'}
+                </label>
+                {mode === 'signin' && (
+                  <button
+                    type="button"
+                    onClick={() => { setMode('forgot'); resetState(); }}
+                    className="text-[11px] text-[#0284C7] hover:underline font-medium cursor-pointer"
+                  >
+                    Forgot password?
+                  </button>
+                )}
+              </div>
+              <div className="relative">
+                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  minLength={6}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••••••"
+                  className="w-full bg-white border border-[#CBD5E1] rounded-xl pl-10 pr-10 py-2.5 text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#38BDF8] focus:ring-2 focus:ring-[#38BDF8]/20 font-mono shadow-2xs"
+                />
                 <button
                   type="button"
-                  onClick={() => { setMode('forgot'); setErrorMsg(null); setSuccessMsg(null); }}
-                  className="text-[11px] text-[#0284C7] hover:underline font-medium cursor-pointer"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#94A3B8] hover:text-[#0F172A] transition-colors cursor-pointer p-1"
+                  title={showPassword ? 'Hide password' : 'Show password'}
                 >
-                  Forgot password?
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
-              )}
+              </div>
             </div>
-            <div className="relative">
-              <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
-              <input
-                type={showPassword ? 'text' : 'password'}
-                required
-                minLength={6}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••••••"
-                className="w-full bg-white border border-[#CBD5E1] rounded-xl pl-10 pr-10 py-2.5 text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#38BDF8] focus:ring-2 focus:ring-[#38BDF8]/20 font-mono shadow-2xs"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#94A3B8] hover:text-[#0F172A] transition-colors cursor-pointer p-1"
-                title={showPassword ? 'Hide password' : 'Show password'}
-              >
-                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
+          )}
 
-          {/* Confirm Password Input (Sign Up & Reset Password Modes) */}
-          {(mode === 'signup' || mode === 'forgot') && (
+          {/* Confirm Password Input (Sign Up or forgot step 'password') */}
+          {(mode === 'signup' || (mode === 'forgot' && forgotStep === 'password')) && (
             <div className="space-y-1.5">
               <label className="block text-xs font-semibold text-[#334155]">
                 {mode === 'forgot' ? 'Confirm New Password' : 'Confirm Password'}
@@ -393,24 +459,39 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             ) : (
               <>
                 <span>
-                  {mode === 'signup'
-                    ? 'Create Research Account'
-                    : mode === 'forgot'
-                    ? 'Reset Password'
-                    : 'Sign In to Studio'}
+                  {mode === 'signup' && 'Create Research Account'}
+                  {mode === 'signin' && 'Sign In to Studio'}
+                  {mode === 'forgot' && (
+                    forgotStep === 'email' ? 'Send Verification Code' :
+                    forgotStep === 'otp' ? 'Verify Code' :
+                    'Change Password'
+                  )}
                 </span>
                 <ArrowRight className="w-4 h-4" />
               </>
             )}
           </button>
 
-          {/* Back to Sign In button in Reset Password mode */}
+          {/* Navigation link back to Sign In */}
           {mode === 'forgot' && (
-            <div className="text-center pt-2">
+            <div className="flex items-center justify-between pt-2 border-t border-[#E2E8F0] text-xs">
+              {forgotStep !== 'email' ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setForgotStep('email');
+                    setErrorMsg(null);
+                    setSuccessMsg(null);
+                  }}
+                  className="text-[#64748B] hover:text-[#0F172A] cursor-pointer"
+                >
+                  Change Email / Resend
+                </button>
+              ) : <span />}
               <button
                 type="button"
-                onClick={() => { setMode('signin'); setErrorMsg(null); setSuccessMsg(null); }}
-                className="text-xs text-[#0284C7] hover:underline font-semibold cursor-pointer"
+                onClick={() => { setMode('signin'); resetState(); }}
+                className="text-[#0284C7] hover:underline font-semibold cursor-pointer"
               >
                 Back to Sign In
               </button>

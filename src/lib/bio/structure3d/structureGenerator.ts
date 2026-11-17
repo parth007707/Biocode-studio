@@ -824,6 +824,29 @@ export function generateProteinStructure3D(sequence: string, customAnalysis?: Am
  * - Replaces headers and adds explicit tracking remarks
  * - Does NOT reuse coordinates unchanged
  */
+const AA_ATOMS: Record<string, Set<string>> = {
+  ALA: new Set(['N', 'CA', 'C', 'O', 'CB']),
+  ARG: new Set(['N', 'CA', 'C', 'O', 'CB', 'CG', 'CD', 'NE', 'CZ', 'NH1', 'NH2']),
+  ASN: new Set(['N', 'CA', 'C', 'O', 'CB', 'CG', 'OD1', 'ND2']),
+  ASP: new Set(['N', 'CA', 'C', 'O', 'CB', 'CG', 'OD1', 'OD2']),
+  CYS: new Set(['N', 'CA', 'C', 'O', 'CB', 'SG']),
+  GLN: new Set(['N', 'CA', 'C', 'O', 'CB', 'CG', 'CD', 'OE1', 'NE2']),
+  GLU: new Set(['N', 'CA', 'C', 'O', 'CB', 'CG', 'CD', 'OE1', 'OE2']),
+  GLY: new Set(['N', 'CA', 'C', 'O']),
+  HIS: new Set(['N', 'CA', 'C', 'O', 'CB', 'CG', 'ND1', 'CD2', 'CE1', 'NE2']),
+  ILE: new Set(['N', 'CA', 'C', 'O', 'CB', 'CG1', 'CG2', 'CD1']),
+  LEU: new Set(['N', 'CA', 'C', 'O', 'CB', 'CG', 'CD1', 'CD2']),
+  LYS: new Set(['N', 'CA', 'C', 'O', 'CB', 'CG', 'CD', 'CE', 'NZ']),
+  MET: new Set(['N', 'CA', 'C', 'O', 'CB', 'CG', 'SD', 'CE']),
+  PHE: new Set(['N', 'CA', 'C', 'O', 'CB', 'CG', 'CD1', 'CD2', 'CE1', 'CE2', 'CZ']),
+  PRO: new Set(['N', 'CA', 'C', 'O', 'CB', 'CG', 'CD']),
+  SER: new Set(['N', 'CA', 'C', 'O', 'CB', 'OG']),
+  THR: new Set(['N', 'CA', 'C', 'O', 'CB', 'OG1', 'CG2']),
+  TRP: new Set(['N', 'CA', 'C', 'O', 'CB', 'CG', 'CD1', 'CD2', 'NE1', 'CE2', 'CE3', 'CZ2', 'CZ3', 'CH2']),
+  TYR: new Set(['N', 'CA', 'C', 'O', 'CB', 'CG', 'CD1', 'CD2', 'CE1', 'CE2', 'CZ', 'OH']),
+  VAL: new Set(['N', 'CA', 'C', 'O', 'CB', 'CG1', 'CG2']),
+};
+
 export function generateMutatedHomologyPdb(
   basePdbText: string,
   mutations: Array<{ position: number; modified?: string; original?: string; operation?: string; lengthChange?: number }>,
@@ -834,6 +857,18 @@ export function generateMutatedHomologyPdb(
   }
 
   const sortedMuts = [...mutations].sort((a, b) => a.position - b.position);
+
+  // Set of deleted residue positions
+  const deletedPositions = new Set<number>();
+  for (const m of sortedMuts) {
+    const op = (m.operation || '').toLowerCase();
+    if (op === 'deletion' && m.position) {
+      const delLen = m.lengthChange ? Math.abs(m.lengthChange) : (m.original?.length || 1);
+      for (let p = m.position; p < m.position + delLen; p++) {
+        deletedPositions.add(p);
+      }
+    }
+  }
 
   const subMap = new Map<number, string>();
   for (const m of sortedMuts) {
@@ -878,16 +913,31 @@ export function generateMutatedHomologyPdb(
       const origResSeqStr = line.substring(22, 26).trim();
       const origResSeq = parseInt(origResSeqStr, 10);
       if (!isNaN(origResSeq)) {
+        // Drop coordinates if this residue was deleted
+        if (deletedPositions.has(origResSeq)) {
+          matchedPositions.add(origResSeq);
+          continue;
+        }
+
         const offset = getIndelOffset(origResSeq);
         const shiftedResSeq = origResSeq + offset;
         const formattedResSeq = String(shiftedResSeq).padStart(4, ' ');
 
         let atomLine = line;
+        const atomName = line.substring(12, 16).trim();
+
         // Check if a substitution exists at either the original or shifted position
         const targetPos = subMap.has(origResSeq) ? origResSeq : (subMap.has(shiftedResSeq) ? shiftedResSeq : null);
         if (targetPos !== null) {
           matchedPositions.add(targetPos);
           const newCode3 = subMap.get(targetPos)!;
+
+          // Side-chain atom compatibility check: prune incompatible atoms
+          const validAtoms = AA_ATOMS[newCode3];
+          if (validAtoms && !validAtoms.has(atomName)) {
+            continue;
+          }
+
           atomLine = atomLine.substring(0, 17) + newCode3.padEnd(3, ' ') + atomLine.substring(20);
         }
 

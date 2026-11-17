@@ -77,12 +77,14 @@ export async function resolveMacromolecularStructure(
   try {
     onProgress?.('Querying RCSB PDB & Structure Engine...');
     
-    // Call the dedicated backend structure service
-    const response = await fetch('/api/structure/resolve', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+    // Call the dedicated backend structure service in browser environment
+    if (typeof window !== 'undefined' && window.location?.origin) {
+      const resolveApiUrl = `${window.location.origin}/api/structure/resolve`;
+      const response = await fetch(resolveApiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
       body: JSON.stringify({
         sequence: cleanSeq,
         sequenceId,
@@ -299,6 +301,7 @@ export async function resolveMacromolecularStructure(
         }
       }
     }
+  }
   } catch (err) {
     console.warn('[StructureResolver] Backend resolution error, falling back to client engine:', err);
     if (templatePdbText && mutations.length > 0) {

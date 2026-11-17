@@ -191,19 +191,29 @@ export function parseAndValidateFasta(
   if (expectedType && expectedType !== 'AUTO') {
     detectedType = expectedType;
   } else {
-    // Check if DNA/RNA
-    const hasU = sequence.includes('U');
-    const hasT = sequence.includes('T');
-    const dnaChars = sequence.replace(/[^ACGTN]/g, '').length;
-    const rnaChars = sequence.replace(/[^ACGUN]/g, '').length;
-    const total = sequence.length;
+    // Check authoritative FASTA header annotations for RefSeq mRNA / transcript variants
+    const isMrnaOrRnaHeader = header && (
+      /\b(NM_|XM_|NR_|XR_)\w+/i.test(header) ||
+      /\b(mRNA|transcript)\b/i.test(header)
+    );
 
-    if (hasU && !hasT && rnaChars / total > 0.85) {
+    if (isMrnaOrRnaHeader) {
       detectedType = 'RNA';
-    } else if (hasT && !hasU && dnaChars / total > 0.85) {
-      detectedType = 'DNA';
     } else {
-      detectedType = 'PROTEIN';
+      // Check if DNA/RNA
+      const hasU = sequence.includes('U');
+      const hasT = sequence.includes('T');
+      const dnaChars = sequence.replace(/[^ACGTN]/g, '').length;
+      const rnaChars = sequence.replace(/[^ACGUN]/g, '').length;
+      const total = sequence.length;
+
+      if (hasU && !hasT && rnaChars / total > 0.85) {
+        detectedType = 'RNA';
+      } else if (hasT && !hasU && dnaChars / total > 0.85) {
+        detectedType = 'DNA';
+      } else {
+        detectedType = 'PROTEIN';
+      }
     }
   }
 

@@ -194,7 +194,14 @@ export const BioSequenceProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [organism, setOrganism] = useState<string>(savedState?.organism || DEFAULT_INITIAL_P53.organism);
   const [sequence, setSequence] = useState<string>(savedState?.sequence || DEFAULT_INITIAL_P53.sequence);
   const [originalSequence, setOriginalSequence] = useState<string>(savedState?.originalSequence || savedState?.sequence || DEFAULT_INITIAL_P53.sequence);
-  const [sequenceType, setSequenceType] = useState<'DNA' | 'RNA' | 'PROTEIN' | 'UNKNOWN'>(savedState?.sequenceType || DEFAULT_INITIAL_P53.sequenceType);
+  const [sequenceType, setSequenceType] = useState<'DNA' | 'RNA' | 'PROTEIN' | 'UNKNOWN'>(() => {
+    const acc = (savedState?.accession || DEFAULT_INITIAL_P53.accession || '').toUpperCase();
+    const mol = (savedState?.sourceMetadata?.molecule_type || savedState?.sourceMetadata?.moleculeType || '').toLowerCase();
+    if (acc.startsWith('NM_') || acc.startsWith('XM_') || acc.startsWith('NR_') || acc.startsWith('XR_') || mol === 'mrna') {
+      return 'RNA';
+    }
+    return savedState?.sequenceType || DEFAULT_INITIAL_P53.sequenceType;
+  });
   const [versionNumber, setVersionNumber] = useState<number>(savedState?.versionNumber || 1);
   const [sourceMetadata, setSourceMetadata] = useState<SequenceSourceMetadata | undefined>(savedState?.sourceMetadata || undefined);
   const [hasActiveSequence, setHasActiveSequence] = useState<boolean>(true);

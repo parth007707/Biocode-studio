@@ -300,6 +300,44 @@ const CURATED_NCBI_RECORDS: Record<string, Partial<NCBIDocumentSummary>> = {
     topology: 'linear',
     isLargeSequence: false
   },
+  'NM_007294': {
+    uid: '1519244670',
+    accession: 'NM_007294.4',
+    version: '4',
+    title: 'Homo sapiens BRCA1 DNA repair associated (BRCA1), transcript variant 1, mRNA',
+    definition: 'Homo sapiens BRCA1 DNA repair associated (BRCA1), transcript variant 1, mRNA',
+    organism: 'Homo sapiens',
+    length: 7224,
+    sourceDb: 'nucleotide',
+    moltype: 'mRNA',
+    molecule_type: 'mRNA',
+    sequence_type: 'mRNA Transcript',
+    strand: 'single-stranded',
+    topology: 'linear',
+    feature_annotations: [
+      { type: 'CDS', location: '231..5822', description: 'breast cancer type 1 susceptibility protein isoform 1' }
+    ],
+    isLargeSequence: false
+  },
+  'NM_007294.4': {
+    uid: '1519244670',
+    accession: 'NM_007294.4',
+    version: '4',
+    title: 'Homo sapiens BRCA1 DNA repair associated (BRCA1), transcript variant 1, mRNA',
+    definition: 'Homo sapiens BRCA1 DNA repair associated (BRCA1), transcript variant 1, mRNA',
+    organism: 'Homo sapiens',
+    length: 7224,
+    sourceDb: 'nucleotide',
+    moltype: 'mRNA',
+    molecule_type: 'mRNA',
+    sequence_type: 'mRNA Transcript',
+    strand: 'single-stranded',
+    topology: 'linear',
+    feature_annotations: [
+      { type: 'CDS', location: '231..5822', description: 'breast cancer type 1 susceptibility protein isoform 1' }
+    ],
+    isLargeSequence: false
+  },
   'NR_001564': {
     uid: '11002',
     accession: 'NR_001564.1',

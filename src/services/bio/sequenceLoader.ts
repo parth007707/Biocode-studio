@@ -93,6 +93,24 @@ export const BENCHMARK_STORED_SEQUENCES: Record<
     sequence:
       'ACAUUUGCUUCUGACACAACUGUGUUCACUAGCAACCUCAAACAGACACCAUGGUGCAUCUGACUCCUGAGGAGAAGUCUGCCGUUACUGCCCUGUGGGGCAAGGUGAACGUGGAUGAAGUUGGUGGUGAGGCCCUGGGCA'
   },
+  NM_007294: {
+    accession: 'NM_007294.4',
+    name: 'BRCA1 mRNA Transcript (Variant 1)',
+    organism: 'Homo sapiens',
+    sequenceType: 'RNA',
+    definition: 'Homo sapiens BRCA1 DNA repair associated (BRCA1), transcript variant 1, mRNA (NCBI RefSeq NM_007294.4).',
+    sequence:
+      'AGCUCGCUCGGGUUCAUUGUGCCCGGGUCAUGCCUGUCCUCUGCGCUGAACGCGGCUCAGAAAGUGCCUUCCCUUGGGAGUUUCCUCCCAGCGCCAGGACCUGUCUCCCUCCCCAGGAGCCGCCCCACCCCAGGAGCCGCCCCACCUCCAGGA'
+  },
+  'NM_007294.4': {
+    accession: 'NM_007294.4',
+    name: 'BRCA1 mRNA Transcript (Variant 1)',
+    organism: 'Homo sapiens',
+    sequenceType: 'RNA',
+    definition: 'Homo sapiens BRCA1 DNA repair associated (BRCA1), transcript variant 1, mRNA (NCBI RefSeq NM_007294.4).',
+    sequence:
+      'AGCUCGCUCGGGUUCAUUGUGCCCGGGUCAUGCCUGUCCUCUGCGCUGAACGCGGCUCAGAAAGUGCCUUCCCUUGGGAGUUUCCUCCCAGCGCCAGGACCUGUCUCCCUCCCCAGGAGCCGCCCCACCCCAGGAGCCGCCCCACCUCCAGGA'
+  },
   NC_045512: {
     accession: 'NC_045512',
     name: 'SARS-CoV-2 Complete Genome',
@@ -428,7 +446,10 @@ class SequenceLoaderService {
 
     // 5. Parse FASTA and Extract Metadata
     const fastaInfo = extractFastaInfo(rawFasta);
-    const expectedType = params.sequenceType || (source === 'NCBI' ? 'AUTO' : 'PROTEIN');
+    const isMrnaOrRnaAcc = /^(NM_|XM_|NR_|XR_)/i.test(cleanAcc) ||
+      Boolean(fastaInfo.header && /mrna|transcript/i.test(fastaInfo.header)) ||
+      Boolean(fastaInfo.proteinName && /mrna|transcript/i.test(fastaInfo.proteinName));
+    const expectedType = params.sequenceType || (isMrnaOrRnaAcc ? 'RNA' : (source === 'NCBI' ? 'AUTO' : 'PROTEIN'));
     const validation = parseAndValidateFasta(rawFasta, expectedType);
 
     if (!validation.isValid || !validation.sequence) {

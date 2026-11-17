@@ -3,7 +3,12 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
-import { resolveStructureForSequence, calculateSequenceHash } from "./src/server/structureService";
+import {
+  resolveStructureForSequence,
+  calculateSequenceHash,
+  startStructurePredictionJob,
+  getStructurePredictionJob
+} from "./src/server/structureService";
 
 dotenv.config();
 
@@ -489,6 +494,60 @@ app.post("/api/structure/resolve", async (req, res) => {
       code: "STRUCTURE_RESOLUTION_ERROR"
     });
   }
+});
+
+// ----------------------------------------------------------------------------
+// POST /api/structure/predict - Start Asynchronous Molecular Structure Prediction Job
+// ----------------------------------------------------------------------------
+app.post("/api/structure/predict", (req, res) => {
+  res.setHeader("Content-Type", "application/json");
+
+  try {
+    const { sequence } = req.body;
+    if (!sequence || typeof sequence !== "string" || !sequence.trim()) {
+      return res.status(400).json({
+        ok: false,
+        error: "A valid non-empty sequence is required to start a structure prediction job.",
+        code: "INVALID_SEQUENCE"
+      });
+    }
+
+    const job = startStructurePredictionJob(req.body);
+    return res.status(202).json({
+      ok: true,
+      job
+    });
+  } catch (err: any) {
+    console.error("[Structure Prediction Job Start Error]", err);
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || "Failed to start structure prediction job.",
+      code: "JOB_START_ERROR"
+    });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /api/structure/jobs/:jobId - Poll Asynchronous Structure Job Status
+// ----------------------------------------------------------------------------
+app.get("/api/structure/jobs/:jobId", (req, res) => {
+  res.setHeader("Content-Type", "application/json");
+
+  const { jobId } = req.params;
+  const job = getStructurePredictionJob(jobId);
+
+  if (!job) {
+    return res.status(404).json({
+      ok: false,
+      error: `Structure prediction job '${jobId}' was not found.`,
+      code: "JOB_NOT_FOUND"
+    });
+  }
+
+  return res.status(200).json({
+    ok: true,
+    job
+  });
 });
 
 // ----------------------------------------------------------------------------
