@@ -11,6 +11,8 @@ import { AlertCircle, ChevronLeft, ChevronRight, Sparkles, Maximize2, Layers } f
 import { SequenceMutation } from '../../../lib/bio/editor/types';
 import { WhatIfSimulationResult } from '../../../lib/bio/whatIfSimulator';
 
+import { ResolvedStructure3D } from '../../../lib/bio/structure3d/types';
+
 export interface SequenceStructureViewerProps {
   sequence: string;
   sequenceType: SequenceType;
@@ -24,6 +26,7 @@ export interface SequenceStructureViewerProps {
   simulatedSequence?: string | null;
   simulationResult?: WhatIfSimulationResult | null;
   sequenceVersion?: string;
+  onStructureResolved?: (structure: ResolvedStructure3D | null) => void;
   className?: string;
 }
 
@@ -40,6 +43,7 @@ export const SequenceStructureViewer: React.FC<SequenceStructureViewerProps> = (
   simulatedSequence,
   simulationResult,
   sequenceVersion = 'v1',
+  onStructureResolved,
   className = ''
 }) => {
   const fullLength = sequence.length;
@@ -49,7 +53,7 @@ export const SequenceStructureViewer: React.FC<SequenceStructureViewerProps> = (
   const [engineMode, setEngineMode] = useState<'scientific_engine' | 'classic_viewer'>('scientific_engine');
   const [isStudioModalOpen, setIsStudioModalOpen] = useState<boolean>(false);
 
-  // Region / Window selection state for large sequences
+  // Region / Window selection state for Linear Diagram view on large sequences
   const DEFAULT_WINDOW_SIZE = 120;
   const [windowStart, setWindowStart] = useState<number>(0);
   const [windowSize, setWindowSize] = useState<number>(Math.min(DEFAULT_WINDOW_SIZE, fullLength || DEFAULT_WINDOW_SIZE));
@@ -57,10 +61,6 @@ export const SequenceStructureViewer: React.FC<SequenceStructureViewerProps> = (
   const safeStart = Math.max(0, Math.min(windowStart, Math.max(0, fullLength - windowSize)));
   const safeEnd = Math.min(safeStart + windowSize, fullLength);
   const activeWindowSequence = sequence.slice(safeStart, safeEnd) || sequence.slice(0, DEFAULT_WINDOW_SIZE);
-
-  const origActiveWindowSequence = originalSequence
-    ? originalSequence.slice(safeStart, Math.min(safeStart + windowSize, originalSequence.length))
-    : activeWindowSequence;
 
   const handleJump = (target: 'start' | 'center' | 'end' | 'longestOrf') => {
     if (target === 'start') {
@@ -84,20 +84,13 @@ export const SequenceStructureViewer: React.FC<SequenceStructureViewerProps> = (
     }
   };
 
-  // Target sequence for 3D Structure Explorer: when large, use region to prevent compute exhaustion
-  const structureTargetSequence = isLarge && fullLength > 500 ? activeWindowSequence : sequence;
-  const structureTargetOriginal = isLarge && fullLength > 500 ? origActiveWindowSequence : originalSequence;
-  const structureTargetAccession = isLarge && fullLength > 500
-    ? `${accessionOrPdbId || 'Region'} (pos ${safeStart + 1}–${safeEnd})`
-    : (accessionOrPdbId || '');
-
   return (
     <div className={`flex flex-col space-y-3 w-full ${className}`}>
       {/* 3D Mode Selector & Header Navigation Bar */}
-      <div className="bg-white border border-[#E2E8F0] rounded-xl p-2.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 text-xs font-mono shadow-2xs">
+      <div className="bg-white border border-[#E2E8F0] rounded-xl p-2.5 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 text-xs font-mono shadow-2xs">
         <div className="flex items-center gap-2 flex-wrap">
           {/* Mode Switcher */}
-          <div className="flex items-center bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg p-0.5">
+          <div className="flex flex-wrap items-center bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg p-0.5 max-w-full">
             <button
               type="button"
               onClick={() => setEngineMode('scientific_engine')}
@@ -123,20 +116,19 @@ export const SequenceStructureViewer: React.FC<SequenceStructureViewerProps> = (
             </button>
           </div>
 
-          {/* Region / Viewport Indicator for Large Sequences */}
-          {isLarge && (
+          {/* Region / Viewport Indicator when viewing Linear Diagram of Large Sequences */}
+          {engineMode === 'classic_viewer' && isLarge && (
             <span className="text-slate-500 text-[11px] hidden sm:inline font-mono">
               Region: <strong className="text-[#0F172A]">{safeStart + 1}</strong>..
-              <strong className="text-[#0F172A]">{safeEnd}</strong> bp ({safeEnd - safeStart} bp of {fullLength.toLocaleString()} bp)
+              <strong className="text-[#0F172A]">{safeEnd}</strong> ({safeEnd - safeStart} of {fullLength.toLocaleString()})
             </span>
           )}
         </div>
 
-        {/* Quick Locality Jump Buttons & Studio Opener */}
-        <div className="flex items-center gap-1.5 self-end sm:self-auto flex-wrap">
-          {isLarge && (
+        {/* Quick Locality Jump Buttons (Linear Diagram) & Studio Opener */}
+        <div className="flex items-center gap-1.5 self-stretch sm:self-auto justify-between sm:justify-end flex-wrap">
+          {engineMode === 'classic_viewer' && isLarge && (
             <>
-              {/* Window Size Selector */}
               <div className="flex items-center gap-0.5 bg-slate-50 border border-[#CBD5E1] rounded p-0.5 text-[10px]">
                 {[120, 240, 500].filter(s => s <= fullLength).map((size) => (
                   <button
@@ -150,7 +142,7 @@ export const SequenceStructureViewer: React.FC<SequenceStructureViewerProps> = (
                       windowSize === size ? 'bg-white text-sky-700 font-bold shadow-2xs' : 'text-slate-600 hover:text-[#0F172A]'
                     }`}
                   >
-                    {size} bp
+                    {size}
                   </button>
                 ))}
               </div>
@@ -172,7 +164,7 @@ export const SequenceStructureViewer: React.FC<SequenceStructureViewerProps> = (
                   safeStart === 0 ? 'bg-sky-600 text-white font-medium' : 'bg-white border border-[#CBD5E1] text-slate-600 hover:text-[#0F172A]'
                 }`}
               >
-                5' Head
+                5&apos; Head
               </button>
 
               <button
@@ -190,7 +182,7 @@ export const SequenceStructureViewer: React.FC<SequenceStructureViewerProps> = (
                   safeEnd === fullLength ? 'bg-sky-600 text-white font-medium' : 'bg-white border border-[#CBD5E1] text-slate-600 hover:text-[#0F172A]'
                 }`}
               >
-                3' Tail
+                3&apos; Tail
               </button>
 
               {dnaAnalysis?.longestOrf && (
@@ -232,14 +224,15 @@ export const SequenceStructureViewer: React.FC<SequenceStructureViewerProps> = (
       {/* Primary Structure Viewport */}
       {engineMode === 'scientific_engine' ? (
         <StructureExplorer
-          sequence={structureTargetSequence}
+          sequence={sequence}
           sequenceType={sequenceType}
-          accession={structureTargetAccession}
+          accession={accessionOrPdbId || ''}
           sequenceVersion={sequenceVersion}
-          originalSequence={structureTargetOriginal}
+          originalSequence={originalSequence}
           simulatedSequence={simulatedSequence}
           simulationResult={simulationResult}
           mutations={mutations}
+          onStructureResolved={onStructureResolved}
           className="w-full flex-1"
         />
       ) : (
@@ -287,7 +280,7 @@ export const SequenceStructureViewer: React.FC<SequenceStructureViewerProps> = (
                 );
               }
               return (
-                <div className="w-full h-[480px] min-h-[480px] rounded-2xl border border-[#CBD5E1] bg-[#F8FAFC] flex items-center justify-center text-[#64748B] text-xs font-mono">
+                <div className="w-full h-[300px] sm:h-[420px] lg:h-[480px] min-h-[280px] sm:min-h-[420px] rounded-2xl border border-[#CBD5E1] bg-[#F8FAFC] flex items-center justify-center text-[#64748B] text-xs font-mono">
                   Loading protein structural model...
                 </div>
               );
@@ -295,7 +288,7 @@ export const SequenceStructureViewer: React.FC<SequenceStructureViewerProps> = (
 
             default:
               return (
-                <div className="w-full h-[480px] min-h-[480px] rounded-2xl border border-[#CBD5E1] bg-[#F8FAFC] flex flex-col items-center justify-center p-8 text-center text-[#64748B] text-xs">
+                <div className="w-full h-[300px] sm:h-[420px] lg:h-[480px] min-h-[280px] sm:min-h-[420px] rounded-2xl border border-[#CBD5E1] bg-[#F8FAFC] flex flex-col items-center justify-center p-6 sm:p-8 text-center text-[#64748B] text-xs">
                   <AlertCircle className="w-8 h-8 text-[#FB923C] mb-2" />
                   <p className="font-semibold text-[#0F172A]">No structural model available for unrecognized sequence</p>
                   <p className="text-[#64748B] mt-1">Please enter a valid DNA, RNA, or Protein sequence.</p>

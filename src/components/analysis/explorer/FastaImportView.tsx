@@ -99,10 +99,10 @@ export const FastaImportView: React.FC<FastaImportViewProps> = ({ onAnalyzeInWor
   };
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-6">
+    <div className="p-4 sm:p-6 max-w-5xl mx-auto space-y-5 sm:space-y-6">
       {/* Header */}
       <div className="space-y-1">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-mono text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">
             FASTA File Ingestion
           </span>
@@ -111,7 +111,7 @@ export const FastaImportView: React.FC<FastaImportViewProps> = ({ onAnalyzeInWor
             Local Multi-Format Parser
           </span>
         </div>
-        <h2 className="text-xl font-bold text-white tracking-tight">
+        <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight">
           Upload Biological FASTA File
         </h2>
         <p className="text-xs text-slate-400">
@@ -126,7 +126,7 @@ export const FastaImportView: React.FC<FastaImportViewProps> = ({ onAnalyzeInWor
         onDragOver={handleDrag}
         onDrop={handleDrop}
         onClick={() => fileInputRef.current?.click()}
-        className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${
+        className={`border-2 border-dashed rounded-xl p-5 sm:p-8 text-center cursor-pointer transition-all ${
           dragActive
             ? 'border-emerald-500 bg-emerald-500/5 scale-[0.99]'
             : 'border-slate-800 hover:border-slate-700 bg-[#0B0F17]'
@@ -166,8 +166,8 @@ export const FastaImportView: React.FC<FastaImportViewProps> = ({ onAnalyzeInWor
 
       {/* Parsed File Preview */}
       {fileData && (
-        <div className="bg-[#0B0F17] border border-slate-800 rounded-xl p-5 space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+        <div className="bg-[#0B0F17] border border-slate-800 rounded-xl p-4 sm:p-5 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800">
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-400" />
               <h3 className="text-xs font-bold uppercase tracking-wider text-white">
@@ -221,9 +221,9 @@ export const FastaImportView: React.FC<FastaImportViewProps> = ({ onAnalyzeInWor
 
           {/* Validation Feedback Banner */}
           {fileData.validation && !fileData.validation.isValid && (
-            <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-lg flex items-center justify-between gap-3 text-xs text-rose-300 font-mono">
-              <div className="flex items-center gap-2">
-                <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
+            <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-rose-300 font-mono">
+              <div className="flex items-start sm:items-center gap-2">
+                <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0 mt-0.5 sm:mt-0" />
                 <span>
                   Flagged <strong>{fileData.validation.totalInvalidCount}</strong> non-biological / invalid character(s) in this file ({fileData.validation.invalidFindings.map((f: any) => `'${f.char}'`).join(', ')}).
                 </span>
@@ -235,7 +235,7 @@ export const FastaImportView: React.FC<FastaImportViewProps> = ({ onAnalyzeInWor
                   const newFasta = fileData.parsedHeader ? `>${fileData.parsedHeader}\n${clean}` : clean;
                   onAnalyzeInWorkbench(newFasta);
                 }}
-                className="px-3 py-1 bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 border border-rose-500/40 rounded-md font-bold transition-colors cursor-pointer shrink-0"
+                className="px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 border border-rose-500/40 rounded-md font-bold transition-colors cursor-pointer shrink-0 self-start sm:self-center"
               >
                 Auto-Sanitize &amp; Analyze
               </button>
@@ -254,7 +254,7 @@ export const FastaImportView: React.FC<FastaImportViewProps> = ({ onAnalyzeInWor
             <button
               type="button"
               onClick={() => onAnalyzeInWorkbench(fileData.rawText)}
-              className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black font-semibold text-xs rounded-lg transition-all flex items-center gap-2 shadow-md shadow-emerald-500/20 cursor-pointer"
+              className="w-full sm:w-auto px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black font-semibold text-xs rounded-lg transition-all flex items-center justify-center gap-2 shadow-md shadow-emerald-500/20 cursor-pointer"
             >
               <Dna className="w-4 h-4" />
               <span>Analyze Sequence in Workbench</span>

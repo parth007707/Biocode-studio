@@ -1,4 +1,15 @@
 import crypto from 'crypto';
+import {
+  translateCodingNucleotideSequence,
+  alignTargetToChainSequence,
+  reverseComplementNucleotide,
+  computeSequenceDiffMutations,
+  ChainSequenceAlignment
+} from '../lib/bio/structure3d/alignment';
+import { parseStructureText } from '../lib/bio/structure3d/pdbParser';
+import { parseBiologicalInput } from '../lib/bio/sequenceParser';
+import { detectSequence } from '../lib/bio/sequenceDetector';
+import { StructureCandidateSummary } from '../lib/bio/structure3d/types';
 
 export interface ResolveStructureParams {
   sequence: string;
@@ -7,6 +18,7 @@ export interface ResolveStructureParams {
   sequenceHash?: string;
   accession?: string;
   sequenceType?: string;
+  preferredPdbId?: string;
   allowSequenceDerivedFallback?: boolean;
   mutations?: Array<{
     position: number;
@@ -19,6 +31,7 @@ export interface ResolveStructureParams {
   originalSequence?: string;
   templatePdbId?: string;
   templatePdbText?: string;
+  autoPredict?: boolean;
 }
 
 export interface StructureCoverageResult {
@@ -30,7 +43,9 @@ export interface StructureCoverageResult {
   isPartial: boolean;
   unresolvedRegions: string[];
   chain: string;
+  sequenceIdentity: number;
   coverageLabel: string;
+  targetToChainResSeq?: Record<number, number>;
 }
 
 export interface StructureResolutionResult {
@@ -39,10 +54,14 @@ export interface StructureResolutionResult {
   sequenceVersion: string;
   sequenceHash: string;
   sequenceLength: number;
+  detectedPolymerType?: 'PROTEIN' | 'DNA' | 'RNA' | 'UNKNOWN';
   structureFormat: 'PDB' | 'mmCIF';
   structureType: 'EXPERIMENTAL' | 'PREDICTED' | 'PARTIAL' | 'SEQUENCE_DERIVED' | 'UNAVAILABLE';
+  classification: 'Experimental' | 'Predicted' | 'Unavailable';
   source: string;
   sourceId?: string;
+  matchedChainId?: string;
+  sequenceIdentity?: number;
   resolution?: string;
   experimentalMethod?: string;
   predictionMethod?: string;
@@ -52,6 +71,25 @@ export interface StructureResolutionResult {
     description: string;
   };
   coverageInfo?: StructureCoverageResult;
+  missingRegions?: string[];
+  parsedAtomCount: number;
+  invalidAtomCount: number;
+  parsedResiduesCount: number;
+  candidateStructures?: StructureCandidateSummary[];
+  targetProteinSequence?: string;
+  translatedFromNucleotide?: boolean;
+  nucleotideAccession?: string;
+  ncbiProteinAccession?: string;
+  uniprotAccession?: string;
+  modificationRelation?: {
+    hasOriginalComparison: boolean;
+    diffCount: number;
+    modeledDiffCount: number;
+    hasIndels: boolean;
+    note?: string;
+  };
+  predictionAvailable?: boolean;
+  predictionReason?: string;
   pdbText: string;
   chainsCount: number;
   residuesCount: number;
@@ -80,158 +118,433 @@ const structureCache = new Map<string, StructureResolutionResult>();
 // In-memory prediction job queue
 const jobQueue = new Map<string, StructurePredictionJob>();
 
-/**
- * Start asynchronous prediction or modeling job
- */
-export function startStructurePredictionJob(params: ResolveStructureParams): StructurePredictionJob {
-  const cleanSeq = (params.sequence || '').toUpperCase().replace(/[^A-Z]/g, '');
-  const seqHash = calculateSequenceHash(cleanSeq);
-  const jobId = `job_struct_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  
-  const now = new Date().toISOString();
-  const job: StructurePredictionJob = {
-    jobId,
-    status: 'processing',
-    phase: 'Searching biological structure archives (RCSB PDB & AlphaFold DB)...',
-    progress: 25,
-    sequenceHash: seqHash,
-    sequenceLength: cleanSeq.length,
-    params,
-    createdAt: now,
-    updatedAt: now
-  };
-
-  jobQueue.set(jobId, job);
-
-  // Execute job asynchronously in background
-  setTimeout(async () => {
-    try {
-      job.progress = 50;
-      job.phase = 'Querying coordinates and computing template homology...';
-      job.updatedAt = new Date().toISOString();
-
-      const result = await resolveStructureForSequence(params);
-      
-      job.status = 'completed';
-      job.progress = 100;
-      job.phase = 'Structure coordinates ready';
-      job.structure = result;
-      job.updatedAt = new Date().toISOString();
-    } catch (err: any) {
-      job.status = 'failed';
-      job.progress = 100;
-      job.error = err?.message || 'Failed to predict structure for sequence';
-      job.phase = 'Prediction failed';
-      job.updatedAt = new Date().toISOString();
-    }
-  }, 100);
-
-  return job;
-}
-
-/**
- * Get job status by ID
- */
-export function getStructurePredictionJob(jobId: string): StructurePredictionJob | null {
-  return jobQueue.get(jobId) || null;
-}
+const HTTP_HEADERS = {
+  'User-Agent': 'BioCodeStudio/1.0 (computational-biology-workbench)',
+  'Accept': 'application/json'
+};
 
 /**
  * Deterministic SHA-256 calculation for biological sequences
  */
 export function calculateSequenceHash(sequence: string): string {
-  const clean = sequence.toUpperCase().replace(/[^A-Z]/g, '');
+  const parsed = parseBiologicalInput(sequence || '');
+  const clean = (parsed.sequence || sequence).toUpperCase().replace(/[^A-Z]/g, '');
   return crypto.createHash('sha256').update(clean).digest('hex');
 }
 
-/**
- * Calculate structural coverage from PDB text with dynamic best-chain detection
- */
-function extractPdbCoverage(pdbText: string, fullLength: number, preferredChainId?: string): StructureCoverageResult {
-  const lines = pdbText.split('\n');
-  const chainResSeqs = new Map<string, Set<number>>();
-  
-  for (const line of lines) {
-    if (line.startsWith('ATOM  ')) {
-      const lineChain = line.substring(21, 22).trim() || 'A';
-      const resSeq = parseInt(line.substring(22, 26).trim(), 10);
-      if (!isNaN(resSeq)) {
-        if (!chainResSeqs.has(lineChain)) chainResSeqs.set(lineChain, new Set<number>());
-        chainResSeqs.get(lineChain)!.add(resSeq);
-      }
-    }
+function extractAccessionFromHeader(header: string): string | undefined {
+  if (!header) return undefined;
+  const trimmed = header.trim();
+  const uniProtPipe = trimmed.match(/\b(?:sp|tr)\|([A-Z0-9]{6,10})\|/i);
+  if (uniProtPipe) return uniProtPipe[1].toUpperCase();
+  const refPipe = trimmed.match(/\bref\|([A-Z]{2}_[0-9]+(?:\.[0-9]+)?)\|/i);
+  if (refPipe) return refPipe[1].toUpperCase();
+  const refSeqMatch = trimmed.match(/\b((?:NP|XP|YP|WP|AP|NM|XM|NR|XR|NC|NG)_[0-9]+(?:\.[0-9]+)?)\b/i);
+  if (refSeqMatch) return refSeqMatch[1].toUpperCase();
+  const pdbMatch = trimmed.match(/\b(?:pdb[:|\s]+)?([0-9][A-Z0-9]{3})(?:_[A-Z0-9])?\b/i);
+  if (pdbMatch && trimmed.toLowerCase().includes('pdb')) return pdbMatch[1].toUpperCase();
+  const firstToken = trimmed.split(/[\s|]+/)[0];
+  if (firstToken && /^([OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2}|[A-Z]{3}[0-9]{5,}(?:\.[0-9]+)?)$/i.test(firstToken)) {
+    return firstToken.toUpperCase();
+  }
+  return undefined;
+}
+
+function classifyUniversalInput(
+  rawSequence: string,
+  rawSequenceType?: string,
+  rawAccession?: string
+): {
+  header: string;
+  cleanSeq: string;
+  accession: string;
+  polymerType: 'PROTEIN' | 'DNA' | 'RNA' | 'UNKNOWN';
+  invalidReason?: string;
+} {
+  const parsed = parseBiologicalInput(rawSequence || '');
+  const rawBody = (parsed.sequence || rawSequence || '').toUpperCase().replace(/[^A-Z*]/g, '');
+  const cleanSeq = rawBody.replace(/\*/g, '').replace(/[^A-Z]/g, '');
+  const derivedAcc = rawAccession?.trim() || extractAccessionFromHeader(parsed.header) || '';
+  const accUpper = derivedAcc.toUpperCase();
+
+  const det = detectSequence(cleanSeq, derivedAcc ? { source: 'Direct Input', accession: derivedAcc } : null, parsed.header);
+  const requested = (rawSequenceType || '').toUpperCase().trim();
+
+  // Reject biologically invalid mixed T/U nucleic sequences that have no protein-exclusive residues
+  if (det.isMixedTU && !/[EFILPQZJO]/i.test(cleanSeq)) {
+    return {
+      header: parsed.header,
+      cleanSeq,
+      accession: derivedAcc,
+      polymerType: 'UNKNOWN',
+      invalidReason: det.reason
+    };
   }
 
-  // Choose the target chain: preferredChainId if valid, otherwise chain with most residues
-  let chosenChain = preferredChainId;
-  if (!chosenChain || !chainResSeqs.has(chosenChain)) {
-    let maxCount = 0;
-    for (const [ch, set] of chainResSeqs.entries()) {
-      if (set.size > maxCount) {
-        maxCount = set.size;
-        chosenChain = ch;
-      }
-    }
-  }
-  chosenChain = chosenChain || 'A';
+  let polymerType: 'PROTEIN' | 'DNA' | 'RNA' = 'PROTEIN';
 
-  const resSeqs = chainResSeqs.get(chosenChain) || new Set<number>();
-  const sortedRes = Array.from(resSeqs).sort((a, b) => a - b);
-  const start = sortedRes[0] || 1;
-  const end = sortedRes[sortedRes.length - 1] || sortedRes.length;
-  const count = sortedRes.length;
-  const total = Math.max(fullLength, end);
-  const covPct = total > 0 ? Number(((count / total) * 100).toFixed(1)) : 100;
-  const isPartial = covPct < 95 || start > 3 || end < total - 3;
-
-  const unresolved: string[] = [];
-  if (start > 1) {
-    unresolved.push(`1–${start - 1} (N-terminal region unresolved in experimental structure)`);
-  }
-  // Check internal gaps
-  for (let i = 0; i < sortedRes.length - 1; i++) {
-    if (sortedRes[i + 1] - sortedRes[i] > 2) {
-      unresolved.push(`${sortedRes[i] + 1}–${sortedRes[i + 1] - 1} (Internal flexible loop unmodeled)`);
+  if (requested === 'DNA' || requested === 'RNA' || requested === 'PROTEIN') {
+    // Trust explicit type UNLESS intrinsic biology contradicts it (e.g., protein-exclusive AA in DNA, or pure RNA/DNA pasted with default 'PROTEIN')
+    if ((requested === 'DNA' || requested === 'RNA') && /[EFILPQZJO]/i.test(cleanSeq)) {
+      polymerType = 'PROTEIN';
+    } else if (requested === 'PROTEIN' && det.detectedType === 'RNA' && !/^(NP_|XP_|YP_|WP_|AP_)/.test(accUpper)) {
+      polymerType = 'RNA';
+    } else if (
+      requested === 'PROTEIN' &&
+      det.detectedType === 'DNA' &&
+      cleanSeq.length >= 6 &&
+      !/^(NP_|XP_|YP_|WP_|AP_)/.test(accUpper) &&
+      !/^([OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2})$/.test(accUpper)
+    ) {
+      polymerType = 'DNA';
+    } else {
+      polymerType = requested as 'PROTEIN' | 'DNA' | 'RNA';
     }
-  }
-  if (end < total) {
-    unresolved.push(`${end + 1}–${total} (C-terminal region unresolved in experimental structure)`);
+  } else {
+    polymerType = det.detectedType === 'DNA' || det.detectedType === 'RNA' ? det.detectedType : 'PROTEIN';
   }
 
   return {
-    startResSeq: start,
-    endResSeq: end,
-    coveredResiduesCount: count,
-    totalSequenceLength: total,
-    coveragePercent: covPct,
-    isPartial,
-    unresolvedRegions: unresolved,
-    chain: chosenChain,
-    coverageLabel: `Structure coverage: ${count} / ${total} residues (${covPct}%)`
+    header: parsed.header,
+    cleanSeq,
+    accession: derivedAcc,
+    polymerType
   };
 }
 
+// ============================================================================
+// 1. NCBI METADATA, CDS EXTRACTION & TRANSLATION
+// ============================================================================
+
+interface NcbiCdsInfo {
+  nucleotideAccession: string;
+  proteinAccession?: string;
+  geneSymbol?: string;
+  product?: string;
+  cdsIntervals: Array<{ start: number; end: number }>;
+  translatedProteinSeq: string;
+}
+
 /**
- * Fetch genuine predicted structure from AlphaFold DB (EMBL-EBI / DeepMind)
+ * Fetch NCBI Feature Table + FASTA (when needed) for an mRNA/nucleotide accession
+ * and extract + translate the annotated Coding Sequence (CDS).
  */
+async function fetchNcbiCdsAnnotation(
+  accession: string,
+  suppliedNucleotideSeq: string
+): Promise<NcbiCdsInfo | null> {
+  const cleanAcc = accession.trim().split(/\s+/)[0];
+  if (!cleanAcc) return null;
+
+  try {
+    const ftUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nuccore&id=${encodeURIComponent(cleanAcc)}&rettype=ft&retmode=text`;
+    const ftRes = await fetch(ftUrl, { headers: HTTP_HEADERS });
+    if (!ftRes.ok) return null;
+    const ftText = await ftRes.text();
+    if (!ftText || !ftText.includes('CDS')) return null;
+
+    const lines = ftText.split(/\r?\n/);
+    const cdsIntervals: Array<{ start: number; end: number }> = [];
+    let proteinAccession: string | undefined;
+    let geneSymbol: string | undefined;
+    let product: string | undefined;
+    let currentFeature: string | null = null;
+
+    for (const line of lines) {
+      if (!line.trim() || line.startsWith('>')) continue;
+
+      if (!line.startsWith('\t')) {
+        const parts = line.split('\t');
+        const start = parseInt((parts[0] || '').replace(/[<>]/g, ''), 10);
+        const end = parseInt((parts[1] || '').replace(/[<>]/g, ''), 10);
+        const feat = (parts[2] || '').trim();
+
+        if (feat) {
+          currentFeature = feat;
+          if (feat === 'CDS' && Number.isFinite(start) && Number.isFinite(end)) {
+            cdsIntervals.push({ start, end });
+          }
+        } else if (currentFeature === 'CDS' && Number.isFinite(start) && Number.isFinite(end)) {
+          // Continuation interval for multi-exon CDS
+          cdsIntervals.push({ start, end });
+        }
+      } else {
+        const trimmed = line.replace(/^\t+/, '');
+        const tabIdx = trimmed.indexOf('\t');
+        const key = tabIdx >= 0 ? trimmed.slice(0, tabIdx).trim() : trimmed.trim();
+        const val = tabIdx >= 0 ? trimmed.slice(tabIdx + 1).trim() : '';
+
+        if (currentFeature === 'gene' && key === 'gene' && !geneSymbol && val) {
+          geneSymbol = val;
+        } else if (currentFeature === 'CDS') {
+          if (key === 'protein_id' && val && !proteinAccession) {
+            const m = val.match(/ref\|([^|]+)\|/) || val.match(/^([A-Z]{2,3}_[0-9]+(?:\.[0-9]+)?|[A-Z]{3}[0-9]{5,}(?:\.[0-9]+)?)$/);
+            proteinAccession = m ? m[1] : val.replace(/^.*\|([^|]+)\|?$/, '$1');
+          } else if (key === 'product' && val && !product) {
+            product = val;
+          }
+        }
+      }
+    }
+
+    if (cdsIntervals.length === 0) return null;
+
+    // Ensure we have full nucleotide transcript to slice exact CDS coordinates cleanly
+    let transcriptSeq = suppliedNucleotideSeq.toUpperCase().replace(/[^ATCGUN]/g, '').replace(/U/g, 'T');
+    const maxCoord = Math.max(...cdsIntervals.map(iv => Math.max(iv.start, iv.end)));
+
+    if (transcriptSeq.length < maxCoord) {
+      try {
+        const faUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nuccore&id=${encodeURIComponent(cleanAcc)}&rettype=fasta&retmode=text`;
+        const faRes = await fetch(faUrl, { headers: HTTP_HEADERS });
+        if (faRes.ok) {
+          const faText = await faRes.text();
+          const parsedSeq = faText
+            .split(/\r?\n/)
+            .filter(l => !l.startsWith('>'))
+            .join('')
+            .toUpperCase()
+            .replace(/U/g, 'T')
+            .replace(/[^ATCGN]/g, '');
+          if (parsedSeq.length >= maxCoord) {
+            transcriptSeq = parsedSeq;
+          }
+        }
+      } catch {}
+    }
+
+    let cdsNucleotides = '';
+    for (const iv of cdsIntervals) {
+      if (iv.start <= iv.end && iv.end <= transcriptSeq.length) {
+        cdsNucleotides += transcriptSeq.slice(iv.start - 1, iv.end);
+      }
+    }
+
+    let translatedProteinSeq = cdsNucleotides.length >= 9
+      ? translateCodingNucleotideSequence(cdsNucleotides)
+      : '';
+
+    // Cross-fetch NCBI protein FASTA if CDS coordinates weren't complete in supplied fragment
+    if (translatedProteinSeq.length < 10 && proteinAccession) {
+      try {
+        const protRes = await fetch(
+          `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&id=${encodeURIComponent(proteinAccession)}&rettype=fasta&retmode=text`,
+          { headers: HTTP_HEADERS }
+        );
+        if (protRes.ok) {
+          const protFa = await protRes.text();
+          translatedProteinSeq = protFa
+            .split(/\r?\n/)
+            .filter(l => !l.startsWith('>'))
+            .join('')
+            .toUpperCase()
+            .replace(/[^A-Z]/g, '');
+        }
+      } catch {}
+    }
+
+    if (!translatedProteinSeq) return null;
+
+    return {
+      nucleotideAccession: cleanAcc,
+      proteinAccession,
+      geneSymbol,
+      product,
+      cdsIntervals,
+      translatedProteinSeq
+    };
+  } catch (err) {
+    console.warn('[StructureService] NCBI CDS annotation fetch warning:', err);
+    return null;
+  }
+}
+
+// ============================================================================
+// 2. UNIPROT MAPPING (ACCESSION, REFSEQ XREF & PDB CROSS-REFERENCES)
+// ============================================================================
+
+interface UniProtPdbXref {
+  pdbId: string;
+  method?: string;
+  resolution?: string;
+  resolutionNumeric?: number;
+  chains?: string;
+  spanLength: number;
+}
+
+interface UniProtRecordSummary {
+  accession: string;
+  entryName?: string;
+  proteinName?: string;
+  organism?: string;
+  canonicalSequence: string;
+  pdbXrefs: UniProtPdbXref[];
+}
+
+function parseUniProtChainSpan(chainsText?: string): number {
+  if (!chainsText) return 0;
+  // Example: "A/B/C=94-312" or "B=15-29" or "A=1-393, B=1-50"
+  let maxSpan = 0;
+  const matches = chainsText.matchAll(/(\d+)\s*-\s*(\d+)/g);
+  for (const m of matches) {
+    const start = parseInt(m[1], 10);
+    const end = parseInt(m[2], 10);
+    if (Number.isFinite(start) && Number.isFinite(end) && end >= start) {
+      maxSpan = Math.max(maxSpan, end - start + 1);
+    }
+  }
+  return maxSpan;
+}
+
+function extractUniProtSummary(entry: any): UniProtRecordSummary | null {
+  if (!entry || !entry.primaryAccession) return null;
+  const xrefs: UniProtPdbXref[] = [];
+  for (const xr of entry.uniProtKBCrossReferences || []) {
+    if (xr.database === 'PDB' && xr.id) {
+      const props: Record<string, string> = {};
+      for (const p of xr.properties || []) {
+        if (p.key && p.value) props[p.key] = p.value;
+      }
+      const resStr = props.Resolution;
+      const resNum = resStr ? parseFloat(resStr) : undefined;
+      xrefs.push({
+        pdbId: String(xr.id).toUpperCase(),
+        method: props.Method,
+        resolution: resStr && resStr !== '-' ? resStr.replace(/\s*A$/, ' Å') : undefined,
+        resolutionNumeric: Number.isFinite(resNum) ? resNum : undefined,
+        chains: props.Chains,
+        spanLength: parseUniProtChainSpan(props.Chains)
+      });
+    }
+  }
+
+  // Prefer higher chain span & better resolution
+  xrefs.sort((a, b) => {
+    if (b.spanLength !== a.spanLength) return b.spanLength - a.spanLength;
+    return (a.resolutionNumeric ?? 99) - (b.resolutionNumeric ?? 99);
+  });
+
+  return {
+    accession: String(entry.primaryAccession).toUpperCase(),
+    entryName: entry.uniProtkbId,
+    proteinName: entry.proteinDescription?.recommendedName?.fullName?.value,
+    organism: entry.organism?.scientificName,
+    canonicalSequence: String(entry.sequence?.value || '').toUpperCase().replace(/[^A-Z]/g, ''),
+    pdbXrefs: xrefs
+  };
+}
+
+async function resolveUniProtRecord(
+  accessionsToTry: string[],
+  proteinSeq: string
+): Promise<UniProtRecordSummary | null> {
+  // 1. Direct UniProt accession or entry name check (e.g. P68871 or HBB_HUMAN)
+  for (const acc of accessionsToTry) {
+    const clean = acc.trim().toUpperCase();
+    const isUpAcc = /^([OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2})$/.test(clean);
+    const isUpEntryName = /^[A-Z0-9]{2,6}_[A-Z0-9]{2,6}$/.test(clean) && !clean.startsWith('NM_') && !clean.startsWith('NP_') && !clean.startsWith('NC_') && !clean.startsWith('NR_') && !clean.startsWith('XM_') && !clean.startsWith('XP_');
+    if (isUpAcc || isUpEntryName) {
+      try {
+        const url = isUpAcc
+          ? `https://rest.uniprot.org/uniprotkb/${encodeURIComponent(clean)}.json?fields=accession,id,protein_name,organism_name,sequence,xref_pdb,xref_refseq`
+          : `https://rest.uniprot.org/uniprotkb/search?query=id:${encodeURIComponent(clean)}&fields=accession,id,protein_name,organism_name,sequence,xref_pdb,xref_refseq&format=json&size=1`;
+        const res = await fetch(url, { headers: HTTP_HEADERS });
+        if (res.ok) {
+          const data = await res.json();
+          const entry = isUpAcc ? data : data.results?.[0];
+          const parsed = extractUniProtSummary(entry);
+          if (parsed) return parsed;
+        }
+      } catch {}
+    }
+  }
+
+  // 2. RefSeq / NCBI / EMBL cross-reference query (reviewed Swiss-Prot prioritized)
+  for (const acc of accessionsToTry) {
+    const clean = acc.trim();
+    const accNoVer = clean.split('.')[0];
+    if (!clean || clean.length < 4) continue;
+    try {
+      const q = `((xref:refseq-${clean}) OR (xref:refseq-${accNoVer}) OR (xref:embl-${clean}) OR (xref:embl-${accNoVer})) AND reviewed:true`;
+      const url = `https://rest.uniprot.org/uniprotkb/search?query=${encodeURIComponent(q)}&fields=accession,id,reviewed,protein_name,organism_name,sequence,xref_pdb,xref_refseq&format=json&size=3`;
+      const res = await fetch(url, { headers: HTTP_HEADERS });
+      if (res.ok) {
+        const data = await res.json();
+        const hit = data.results?.[0];
+        const parsed = extractUniProtSummary(hit);
+        if (parsed) return parsed;
+      }
+
+      // Retry without reviewed constraint if only TrEMBL exists
+      const qAny = `(xref:refseq-${clean}) OR (xref:refseq-${accNoVer}) OR (xref:embl-${clean}) OR (xref:embl-${accNoVer})`;
+      const resAny = await fetch(
+        `https://rest.uniprot.org/uniprotkb/search?query=${encodeURIComponent(qAny)}&fields=accession,id,reviewed,protein_name,organism_name,sequence,xref_pdb,xref_refseq&format=json&size=3`,
+        { headers: HTTP_HEADERS }
+      );
+      if (resAny.ok) {
+        const dataAny = await resAny.json();
+        const parsedAny = extractUniProtSummary(dataAny.results?.[0]);
+        if (parsedAny) return parsedAny;
+      }
+    } catch {}
+  }
+
+  // 3. Fallback: RCSB polymer entity -> UniProt ID via protein sequence search
+  if (proteinSeq.length >= 25) {
+    const rcsbHits = await searchRcsbExperimentalMatches(proteinSeq, 'protein', 3);
+    if (rcsbHits.length > 0) {
+      const top = rcsbHits[0];
+      try {
+        const entRes = await fetch(
+          `https://data.rcsb.org/rest/v1/core/polymer_entity/${top.pdbId}/${top.entityId || '1'}`,
+          { headers: HTTP_HEADERS }
+        );
+        if (entRes.ok) {
+          const ent = await entRes.json();
+          const upIds: string[] = ent.rcsb_polymer_entity_container_identifiers?.uniprot_ids || [];
+          if (upIds[0]) {
+            const upRes = await fetch(
+              `https://rest.uniprot.org/uniprotkb/${encodeURIComponent(upIds[0])}.json?fields=accession,id,protein_name,organism_name,sequence,xref_pdb,xref_refseq`,
+              { headers: HTTP_HEADERS }
+            );
+            if (upRes.ok) {
+              const parsed = extractUniProtSummary(await upRes.json());
+              if (parsed) return parsed;
+            }
+          }
+        }
+      } catch {}
+    }
+  }
+
+  return null;
+}
+
+// ============================================================================
+// 3. RCSB PDB & ALPHAFOLD DB SEARCH AND COORDINATE DOWNLOAD
+// ============================================================================
+
 async function searchAlphaFoldDb(uniprotId: string): Promise<{
   pdbUrl: string;
+  cifUrl?: string;
   modelEntityId: string;
   globalMetricValue: number;
   toolUsed: string;
 } | null> {
   try {
-    const res = await fetch(`https://alphafold.ebi.ac.uk/api/prediction/${encodeURIComponent(uniprotId)}`, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (BioCodeStudio/1.0)' }
-    });
+    const res = await fetch(
+      `https://alphafold.ebi.ac.uk/api/prediction/${encodeURIComponent(uniprotId)}`,
+      { headers: HTTP_HEADERS }
+    );
     if (!res.ok) return null;
     const data = await res.json();
-    if (Array.isArray(data) && data[0] && data[0].pdbUrl) {
+    if (Array.isArray(data) && data[0] && (data[0].pdbUrl || data[0].cifUrl)) {
       return {
         pdbUrl: data[0].pdbUrl,
+        cifUrl: data[0].cifUrl,
         modelEntityId: data[0].modelEntityId || `AF-${uniprotId}-F1`,
-        globalMetricValue: Number(data[0].globalMetricValue) || 75.0,
-        toolUsed: data[0].toolUsed || 'AlphaFold Monomer v2.0'
+        globalMetricValue: Number(data[0].globalMetricValue) || 0,
+        toolUsed: data[0].toolUsed || 'AlphaFold Monomer v2.0 pipeline'
       };
     }
     return null;
@@ -241,20 +554,29 @@ async function searchAlphaFoldDb(uniprotId: string): Promise<{
   }
 }
 
-/**
- * Query RCSB PDB Sequence Search API for verified experimental structures
- */
-async function searchRcsbExperimentalMatch(
+async function searchRcsbExperimentalMatches(
   cleanSeq: string,
-  seqType: 'protein' | 'dna' | 'rna' = 'protein'
-): Promise<{
-  pdbId: string;
-  entityId: string;
-  chain?: string;
-  identity: number;
-} | null> {
+  seqType: 'protein' | 'dna' | 'rna' = 'protein',
+  rows: number = 8
+): Promise<Array<{ pdbId: string; entityId: string; score?: number }>> {
+  const parseRcsbResultSet = (data: any): Array<{ pdbId: string; entityId: string; score?: number }> => {
+    const out: Array<{ pdbId: string; entityId: string; score?: number }> = [];
+    for (const item of data?.result_set || []) {
+      const [pdbId, entityId] = String(item.identifier || '').split('_');
+      if (pdbId && pdbId.length === 4) {
+        out.push({
+          pdbId: pdbId.toUpperCase(),
+          entityId: entityId || '1',
+          score: item.score
+        });
+      }
+    }
+    return out;
+  };
+
   try {
-    const query = {
+    const adaptiveEvalue = cleanSeq.length < 40 ? 25 : cleanSeq.length < 80 ? 1.0 : 0.05;
+    const seqQuery = {
       query: {
         type: 'group',
         logical_operator: 'and',
@@ -263,8 +585,8 @@ async function searchRcsbExperimentalMatch(
             type: 'terminal',
             service: 'sequence',
             parameters: {
-              evalue_cutoff: 0.1,
-              identity_cutoff: 0.75, // Allow close homologous experimental structures
+              evalue_cutoff: adaptiveEvalue,
+              identity_cutoff: 0.70,
               sequence_type: seqType,
               value: cleanSeq
             }
@@ -281,65 +603,102 @@ async function searchRcsbExperimentalMatch(
         ]
       },
       request_options: {
-        sort: [{ sort_by: 'rcsb_entry_info.resolution_combined', direction: 'asc' }],
-        paginate: { start: 0, rows: 5 }
+        sort: [{ sort_by: 'score', direction: 'desc' }],
+        paginate: { start: 0, rows }
       },
       return_type: 'polymer_entity'
     };
 
     const res = await fetch('https://search.rcsb.org/rcsbsearch/v2/query', {
       method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'User-Agent': 'BioCodeStudio/1.0 (bioinformatics-research)'
+      headers: {
+        ...HTTP_HEADERS,
+        'Content-Type': 'application/json'
       },
-      body: JSON.stringify(query)
+      body: JSON.stringify(seqQuery)
     });
 
-    if (!res.ok || res.status === 204) {
-      return null;
+    if (res.ok && res.status !== 204) {
+      const text = await res.text();
+      if (text && text.trim()) {
+        const hits = parseRcsbResultSet(JSON.parse(text));
+        if (hits.length > 0) return hits;
+      }
     }
 
-    const text = await res.text();
-    if (!text || text.trim().length === 0) return null;
-    const data = JSON.parse(text);
-    const matches: string[] = data.result_set?.map((x: any) => x.identifier) || [];
-    for (const match of matches) {
-      const [candidatePdb, entityId] = match.split('_');
-      if (candidatePdb && candidatePdb.length === 4) {
-        // Quick verification that .pdb format downloads successfully from RCSB
-        const testRes = await fetch(`https://files.rcsb.org/download/${candidatePdb.toUpperCase()}.pdb`, {
-          method: 'HEAD',
-          headers: { 'User-Agent': 'BioCodeStudio/1.0' }
-        });
-        if (testRes.ok) {
-          return { pdbId: candidatePdb.toUpperCase(), entityId: entityId || '1', identity: 1.0 };
+    // Fallback to RCSB seqmotif search for short peptides & synthetic DNA/RNA oligomers (6–60 nt/aa)
+    // where MMseqs2 sequence search returns 204 due to minimum k-mer/word thresholds.
+    if (cleanSeq.length >= 6 && cleanSeq.length <= 60) {
+      const motifQuery = {
+        query: {
+          type: 'group',
+          logical_operator: 'and',
+          nodes: [
+            {
+              type: 'terminal',
+              service: 'seqmotif',
+              parameters: {
+                value: cleanSeq,
+                pattern_type: 'simple',
+                sequence_type: seqType
+              }
+            },
+            {
+              type: 'terminal',
+              service: 'text',
+              parameters: {
+                attribute: 'exptl.method',
+                operator: 'in',
+                value: ['X-RAY DIFFRACTION', 'CRYO-ELECTRON MICROSCOPY', 'SOLUTION NMR']
+              }
+            }
+          ]
+        },
+        request_options: {
+          sort: [{ sort_by: 'score', direction: 'desc' }],
+          paginate: { start: 0, rows }
+        },
+        return_type: 'polymer_entity'
+      };
+
+      const mRes = await fetch('https://search.rcsb.org/rcsbsearch/v2/query', {
+        method: 'POST',
+        headers: {
+          ...HTTP_HEADERS,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(motifQuery)
+      });
+
+      if (mRes.ok && mRes.status !== 204) {
+        const mText = await mRes.text();
+        if (mText && mText.trim()) {
+          return parseRcsbResultSet(JSON.parse(mText));
         }
       }
     }
-    return null;
+
+    return [];
   } catch (err) {
-    console.warn('[StructureService] RCSB Sequence search warning:', err);
-    return null;
+    console.warn('[StructureService] RCSB sequence search warning:', err);
+    return [];
   }
 }
 
-/**
- * Fetch real PDB metadata from RCSB Data API
- */
 async function fetchRcsbEntryDetails(pdbId: string): Promise<{
   title?: string;
   resolution?: string;
   method?: string;
 }> {
   try {
-    const res = await fetch(`https://data.rcsb.org/rest/v1/core/entry/${pdbId.toUpperCase()}`);
+    const res = await fetch(`https://data.rcsb.org/rest/v1/core/entry/${pdbId.toUpperCase()}`, {
+      headers: HTTP_HEADERS
+    });
     if (!res.ok) return {};
     const d = await res.json();
-    const resolution = d.rcsb_entry_info?.resolution_combined?.[0]
-      ? `${d.rcsb_entry_info.resolution_combined[0]} Å`
-      : undefined;
-    const method = d.exptl?.[0]?.method || d.rcsb_entry_info?.experimental_method || 'X-ray Diffraction';
+    const resVal = d.rcsb_entry_info?.resolution_combined?.[0];
+    const resolution = typeof resVal === 'number' ? `${resVal.toFixed(2)} Å` : undefined;
+    const method = d.exptl?.[0]?.method || d.rcsb_entry_info?.experimental_method;
     const title = d.struct?.title;
     return { title, resolution, method };
   } catch {
@@ -347,25 +706,42 @@ async function fetchRcsbEntryDetails(pdbId: string): Promise<{
   }
 }
 
-/**
- * Fetch actual PDB file text from RCSB PDB
- */
-async function downloadRcsbPdbText(pdbId: string): Promise<string | null> {
+async function downloadRcsbCoordinates(pdbId: string): Promise<{
+  text: string;
+  format: 'PDB' | 'mmCIF';
+} | null> {
+  const upperId = pdbId.trim().toUpperCase();
+  // Try .pdb first, then .cif mmCIF fallback for large complexes / modern deposits
   try {
-    const res = await fetch(`https://files.rcsb.org/download/${pdbId.toUpperCase()}.pdb`, {
-      headers: { 'User-Agent': 'BioCodeStudio/1.0 (bioinformatics-research)' }
+    const pdbRes = await fetch(`https://files.rcsb.org/download/${upperId}.pdb`, {
+      headers: { 'User-Agent': HTTP_HEADERS['User-Agent'] }
     });
-    if (!res.ok) return null;
-    const text = await res.text();
-    if (text.includes('ATOM') || text.includes('HETATM')) {
-      return text;
+    if (pdbRes.ok) {
+      const text = await pdbRes.text();
+      if (text.includes('ATOM') || text.includes('HETATM')) {
+        return { text, format: 'PDB' };
+      }
     }
-    return null;
-  } catch (err) {
-    console.error(`[StructureService] Error downloading ${pdbId}:`, err);
-    return null;
-  }
+  } catch {}
+
+  try {
+    const cifRes = await fetch(`https://files.rcsb.org/download/${upperId}.cif`, {
+      headers: { 'User-Agent': HTTP_HEADERS['User-Agent'] }
+    });
+    if (cifRes.ok) {
+      const text = await cifRes.text();
+      if (text.includes('_atom_site.')) {
+        return { text, format: 'mmCIF' };
+      }
+    }
+  } catch {}
+
+  return null;
 }
+
+// ============================================================================
+// 4. MUTATION MODELING ON VERIFIED COORDINATES
+// ============================================================================
 
 const AA_1TO3: Record<string, string> = {
   A: 'ALA', R: 'ARG', N: 'ASN', D: 'ASP', C: 'CYS',
@@ -373,329 +749,6 @@ const AA_1TO3: Record<string, string> = {
   L: 'LEU', K: 'LYS', M: 'MET', F: 'PHE', P: 'PRO',
   S: 'SER', T: 'THR', W: 'TRP', Y: 'TYR', V: 'VAL'
 };
-
-/**
- * Generate standard B-DNA double helix PDB text
- */
-function generateDnaBackbonePdb(sequence: string, title: string = 'B-DNA Double Helix Model', startResSeq: number = 1): string {
-  const clean = sequence.toUpperCase().replace(/[^ATCGN]/g, '') || 'ATGCATGC';
-  const len = Math.min(clean.length, 2500);
-  const lines: string[] = [
-    `HEADER    DNA STRUCTURE MODEL                         ${new Date().toISOString().slice(0, 10)}`,
-    `TITLE     ${title.slice(0, 60)}`,
-    `REMARK   4 COMPUTATIONAL MODEL: B-DNA DOUBLE HELIX`,
-    `REMARK   4 GENERATION: ALGORITHMIC STEREOSPECIFIC COORDINATES`,
-    `REMARK   4 DISCLAIMER: SEQUENCE-DERIVED VISUALIZATION - NOT EXPERIMENTAL`
-  ];
-
-  let atomNum = 1;
-  const HELIX_RADIUS = 10.0;
-  const RISE_PER_BP = 3.38;
-  const TWIST_PER_BP = (36.0 * Math.PI) / 180;
-
-  // Chain A (5' -> 3')
-  for (let i = 0; i < len; i++) {
-    const base = clean[i];
-    const resSeq = startResSeq + i;
-    const resName = `D${base}`;
-    const theta = i * TWIST_PER_BP;
-    const z = (i - len / 2) * RISE_PER_BP;
-
-    const px = (HELIX_RADIUS + 1.2) * Math.cos(theta);
-    const py = (HELIX_RADIUS + 1.2) * Math.sin(theta);
-    const c4x = HELIX_RADIUS * Math.cos(theta + 0.15);
-    const c4y = HELIX_RADIUS * Math.sin(theta + 0.15);
-    const nx = 4.5 * Math.cos(theta + 0.35);
-    const ny = 4.5 * Math.sin(theta + 0.35);
-
-    lines.push(`ATOM  ${String(atomNum++).padStart(5, ' ')}  P   ${resName.padEnd(3, ' ')} A${String(resSeq).padStart(4, ' ')}    ${px.toFixed(3).padStart(8, ' ')}${py.toFixed(3).padStart(8, ' ')}${z.toFixed(3).padStart(8, ' ')}  1.00 30.00           P`);
-    lines.push(`ATOM  ${String(atomNum++).padStart(5, ' ')}  C4' ${resName.padEnd(3, ' ')} A${String(resSeq).padStart(4, ' ')}    ${c4x.toFixed(3).padStart(8, ' ')}${c4y.toFixed(3).padStart(8, ' ')}${(z + 0.8).toFixed(3).padStart(8, ' ')}  1.00 30.00           C`);
-    lines.push(`ATOM  ${String(atomNum++).padStart(5, ' ')}  N1  ${resName.padEnd(3, ' ')} A${String(resSeq).padStart(4, ' ')}    ${nx.toFixed(3).padStart(8, ' ')}${ny.toFixed(3).padStart(8, ' ')}${z.toFixed(3).padStart(8, ' ')}  1.00 30.00           N`);
-  }
-  lines.push('TER');
-
-  // Chain B (Antiparallel 3' -> 5')
-  const COMPLEMENT: Record<string, string> = { A: 'T', T: 'A', G: 'C', C: 'G', N: 'N' };
-  const STRAND_PHASE_OFFSET = (145.0 * Math.PI) / 180;
-  for (let i = 0; i < len; i++) {
-    const base = COMPLEMENT[clean[i]] || 'A';
-    const resSeq = startResSeq + i;
-    const resName = `D${base}`;
-    const theta = i * TWIST_PER_BP + STRAND_PHASE_OFFSET;
-    const z = (i - len / 2) * RISE_PER_BP;
-
-    const px = (HELIX_RADIUS + 1.2) * Math.cos(theta);
-    const py = (HELIX_RADIUS + 1.2) * Math.sin(theta);
-    const c4x = HELIX_RADIUS * Math.cos(theta - 0.15);
-    const c4y = HELIX_RADIUS * Math.sin(theta - 0.15);
-    const nx = 4.5 * Math.cos(theta - 0.35);
-    const ny = 4.5 * Math.sin(theta - 0.35);
-
-    lines.push(`ATOM  ${String(atomNum++).padStart(5, ' ')}  P   ${resName.padEnd(3, ' ')} B${String(resSeq).padStart(4, ' ')}    ${px.toFixed(3).padStart(8, ' ')}${py.toFixed(3).padStart(8, ' ')}${z.toFixed(3).padStart(8, ' ')}  1.00 30.00           P`);
-    lines.push(`ATOM  ${String(atomNum++).padStart(5, ' ')}  C4' ${resName.padEnd(3, ' ')} B${String(resSeq).padStart(4, ' ')}    ${c4x.toFixed(3).padStart(8, ' ')}${c4y.toFixed(3).padStart(8, ' ')}${(z + 0.8).toFixed(3).padStart(8, ' ')}  1.00 30.00           C`);
-    lines.push(`ATOM  ${String(atomNum++).padStart(5, ' ')}  N1  ${resName.padEnd(3, ' ')} B${String(resSeq).padStart(4, ' ')}    ${nx.toFixed(3).padStart(8, ' ')}${ny.toFixed(3).padStart(8, ' ')}${z.toFixed(3).padStart(8, ' ')}  1.00 30.00           N`);
-  }
-  lines.push('TER');
-  lines.push('END');
-
-  return lines.join('\n');
-}
-
-/**
- * Generate standard A-form RNA tertiary folded PDB text
- */
-function generateRnaBackbonePdb(sequence: string, title: string = 'RNA Tertiary Folded Model', startResSeq: number = 1): string {
-  const clean = sequence.toUpperCase().replace(/[^AUCGN]/g, '') || 'AUGC';
-  const len = Math.min(clean.length, 2500);
-  const lines: string[] = [
-    `HEADER    RNA STRUCTURE MODEL                         ${new Date().toISOString().slice(0, 10)}`,
-    `TITLE     ${title.slice(0, 60)}`,
-    `REMARK   4 COMPUTATIONAL MODEL: A-FORM RNA FOLD`,
-    `REMARK   4 DISCLAIMER: SEQUENCE-DERIVED VISUALIZATION - NOT EXPERIMENTAL`
-  ];
-
-  let atomNum = 1;
-  const HELIX_RADIUS = 9.5;
-  const RISE_PER_BP = 2.81;
-  const TWIST_PER_BP = (32.7 * Math.PI) / 180;
-
-  for (let i = 0; i < len; i++) {
-    const base = clean[i];
-    const resSeq = startResSeq + i;
-    const resName = base;
-    const theta = i * TWIST_PER_BP;
-    const z = (i - len / 2) * RISE_PER_BP;
-
-    const px = (HELIX_RADIUS + 1.0) * Math.cos(theta);
-    const py = (HELIX_RADIUS + 1.0) * Math.sin(theta);
-    const c4x = HELIX_RADIUS * Math.cos(theta + 0.15);
-    const c4y = HELIX_RADIUS * Math.sin(theta + 0.15);
-    const nx = 4.2 * Math.cos(theta + 0.35);
-    const ny = 4.2 * Math.sin(theta + 0.35);
-
-    lines.push(`ATOM  ${String(atomNum++).padStart(5, ' ')}  P   ${resName.padEnd(3, ' ')} A${String(resSeq).padStart(4, ' ')}    ${px.toFixed(3).padStart(8, ' ')}${py.toFixed(3).padStart(8, ' ')}${z.toFixed(3).padStart(8, ' ')}  1.00 35.00           P`);
-    lines.push(`ATOM  ${String(atomNum++).padStart(5, ' ')}  C4' ${resName.padEnd(3, ' ')} A${String(resSeq).padStart(4, ' ')}    ${c4x.toFixed(3).padStart(8, ' ')}${c4y.toFixed(3).padStart(8, ' ')}${(z + 0.8).toFixed(3).padStart(8, ' ')}  1.00 35.00           C`);
-    lines.push(`ATOM  ${String(atomNum++).padStart(5, ' ')}  N1  ${resName.padEnd(3, ' ')} A${String(resSeq).padStart(4, ' ')}    ${nx.toFixed(3).padStart(8, ' ')}${ny.toFixed(3).padStart(8, ' ')}${z.toFixed(3).padStart(8, ' ')}  1.00 35.00           N`);
-  }
-  lines.push('TER');
-  lines.push('END');
-
-  return lines.join('\n');
-}
-
-/**
- * Physics-informed secondary fold generation (used when no experimental structure exists)
- * Generates a compact globular fold with physical 3.8 Å Cα-Cα spacing
- */
-function generatePhysicsInformedBackbonePdb(sequence: string, title: string = 'Sequence-Derived Protein Fold'): {
-  pdbText: string;
-  helixPercent: number;
-  sheetPercent: number;
-} {
-  const clean = sequence.toUpperCase().replace(/[^A-Z]/g, '');
-  const lines: string[] = [
-    `HEADER    COMPUTATIONAL STRUCTURE MODEL               ${new Date().toISOString().slice(0, 10)}`,
-    `TITLE     ${title.slice(0, 60)}`,
-    `REMARK   4 COMPUTATIONAL MODEL: COMPACT GLOBULAR SECONDARY STRUCTURE FOLD`,
-    `REMARK   4 DISCLAIMER: SEQUENCE-DERIVED VISUALIZATION - NOT EXPERIMENTAL ATOMIC COORDINATES`
-  ];
-
-  let atomNum = 1;
-  const n = clean.length;
-
-  const HELIX_FAVORED = new Set(['E', 'A', 'L', 'M', 'Q', 'K', 'R', 'H']);
-  const SHEET_FAVORED = new Set(['V', 'I', 'Y', 'F', 'W', 'T', 'C']);
-
-  // Assign secondary structure per residue using windowed propensities
-  const ssAssignments: ('helix' | 'sheet' | 'coil')[] = [];
-  let helixCount = 0;
-  let sheetCount = 0;
-
-  for (let i = 0; i < n; i++) {
-    const aa = clean[i];
-    let hScore = 0;
-    let sScore = 0;
-    const wStart = Math.max(0, i - 2);
-    const wEnd = Math.min(n, i + 3);
-    for (let j = wStart; j < wEnd; j++) {
-      if (HELIX_FAVORED.has(clean[j])) hScore++;
-      if (SHEET_FAVORED.has(clean[j])) sScore++;
-    }
-    if (hScore >= 3 && hScore >= sScore) {
-      ssAssignments.push('helix');
-      helixCount++;
-    } else if (sScore >= 3) {
-      ssAssignments.push('sheet');
-      sheetCount++;
-    } else {
-      ssAssignments.push('coil');
-    }
-  }
-
-  // Smooth short isolates (< 3 residues)
-  for (let i = 1; i < n - 1; i++) {
-    if (ssAssignments[i - 1] === ssAssignments[i + 1] && ssAssignments[i] !== ssAssignments[i - 1]) {
-      ssAssignments[i] = ssAssignments[i - 1];
-    }
-  }
-
-  // Fold propagation state: compact globular bundle
-  let currX = 0, currY = 0, currZ = 0;
-  let dirX = 1, dirY = 0, dirZ = 0;
-  let normX = 0, normY = 1, normZ = 0;
-  let binormX = 0, binormY = 0, binormZ = 1;
-
-  let segResIndex = 0;
-  let currentSS: 'helix' | 'sheet' | 'coil' = ssAssignments[0] || 'coil';
-
-  const caCoords: { x: number; y: number; z: number }[] = [];
-
-  for (let i = 0; i < n; i++) {
-    const ss = ssAssignments[i];
-    if (ss !== currentSS) {
-      currentSS = ss;
-      segResIndex = 0;
-      // On element transition, turn orientation smoothly
-      const distFromCenter = Math.sqrt(currX * currX + currY * currY + currZ * currZ);
-      const toCenterX = distFromCenter > 20 ? -currX / distFromCenter : -dirX * 0.7 + Math.sin(i) * 0.4;
-      const toCenterY = distFromCenter > 20 ? -currY / distFromCenter : -dirY * 0.7 + Math.cos(i) * 0.4;
-      const toCenterZ = distFromCenter > 20 ? -currZ / distFromCenter : -dirZ * 0.7 + Math.sin(i * 1.5) * 0.4;
-
-      dirX = dirX * 0.3 + toCenterX * 0.7;
-      dirY = dirY * 0.3 + toCenterY * 0.7;
-      dirZ = dirZ * 0.3 + toCenterZ * 0.7;
-      const dLen = Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ) || 1;
-      dirX /= dLen; dirY /= dLen; dirZ /= dLen;
-
-      // Orthonormal frame update
-      normX = -dirY; normY = dirX; normZ = 0;
-      const nLen = Math.sqrt(normX * normX + normY * normY + normZ * normZ) || 1;
-      normX /= nLen; normY /= nLen; normZ /= nLen;
-      binormX = dirY * normZ - dirZ * normY;
-      binormY = dirZ * normX - dirX * normZ;
-      binormZ = dirX * normY - dirY * normX;
-    }
-
-    if (currentSS === 'helix') {
-      // Authentic Alpha-Helix: radius 2.3 Å, pitch 1.5 Å/residue, 100° angle per residue
-      const theta = segResIndex * (100 * Math.PI / 180);
-      const rad = 2.3;
-      const hRise = 1.5;
-      currX += dirX * hRise;
-      currY += dirY * hRise;
-      currZ += dirZ * hRise;
-      const caX = currX + rad * (Math.cos(theta) * normX + Math.sin(theta) * binormX);
-      const caY = currY + rad * (Math.cos(theta) * normY + Math.sin(theta) * binormY);
-      const caZ = currZ + rad * (Math.cos(theta) * normZ + Math.sin(theta) * binormZ);
-      caCoords.push({ x: caX, y: caY, z: caZ });
-    } else if (currentSS === 'sheet') {
-      // Authentic Beta-Strand: rise 3.3 Å/residue, alternating pleat ±0.9 Å
-      const sRise = 3.3;
-      const pleat = segResIndex % 2 === 0 ? 0.9 : -0.9;
-      currX += dirX * sRise;
-      currY += dirY * sRise;
-      currZ += dirZ * sRise;
-      const caX = currX + pleat * normX;
-      const caY = currY + pleat * normY;
-      const caZ = currZ + pleat * normZ;
-      caCoords.push({ x: caX, y: caY, z: caZ });
-    } else {
-      // Loop / Turn: 3.8 Å trans-peptide step curving toward center of globular fold
-      const distFromCenter = Math.sqrt(currX * currX + currY * currY + currZ * currZ);
-      if (distFromCenter > 22) {
-        dirX = dirX * 0.6 - (currX / distFromCenter) * 0.4;
-        dirY = dirY * 0.6 - (currY / distFromCenter) * 0.4;
-        dirZ = dirZ * 0.6 - (currZ / distFromCenter) * 0.4;
-      } else {
-        const turnPhase = i * 0.4;
-        dirX += Math.sin(turnPhase) * 0.15;
-        dirY += Math.cos(turnPhase) * 0.15;
-        dirZ += Math.sin(turnPhase * 1.3) * 0.15;
-      }
-      const dLen = Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ) || 1;
-      dirX /= dLen; dirY /= dLen; dirZ /= dLen;
-
-      currX += dirX * 3.8;
-      currY += dirY * 3.8;
-      currZ += dirZ * 3.8;
-      caCoords.push({ x: currX, y: currY, z: currZ });
-    }
-
-    segResIndex++;
-  }
-
-  // Construct standard PDB atoms with stereochemically valid backbone coordinates
-  for (let i = 0; i < n; i++) {
-    const aa = clean[i];
-    const resSeq = i + 1;
-    const resName = AA_1TO3[aa] || 'GLY';
-    const ca = caCoords[i];
-
-    // Compute local backbone tangent
-    const prevCa = i > 0 ? caCoords[i - 1] : ca;
-    const nextCa = i < n - 1 ? caCoords[i + 1] : ca;
-    let tx = nextCa.x - prevCa.x;
-    let ty = nextCa.y - prevCa.y;
-    let tz = nextCa.z - prevCa.z;
-    const tLen = Math.sqrt(tx * tx + ty * ty + tz * tz) || 1;
-    tx /= tLen; ty /= tLen; tz /= tLen;
-
-    // Standard stereochemical backbone atom offsets
-    const nx = ca.x - tx * 1.46 + Math.sin(i) * 0.35;
-    const ny = ca.y - ty * 1.46 + Math.cos(i) * 0.35;
-    const nz = ca.z - tz * 1.46;
-
-    const cx = ca.x + tx * 1.52 - Math.sin(i) * 0.30;
-    const cy = ca.y + ty * 1.52 - Math.cos(i) * 0.30;
-    const cz = ca.z + tz * 1.52;
-
-    const ox = cx + 0.8 * Math.cos(i * 2);
-    const oy = cy + 0.8 * Math.sin(i * 2);
-    const oz = cz + 0.5;
-
-    lines.push(
-      `ATOM  ${String(atomNum++).padStart(5, ' ')}  N   ${resName} A${String(resSeq).padStart(4, ' ')}    ` +
-      `${nx.toFixed(3).padStart(8, ' ')}` +
-      `${ny.toFixed(3).padStart(8, ' ')}` +
-      `${nz.toFixed(3).padStart(8, ' ')}` +
-      `  1.00 45.00           N`
-    );
-
-    lines.push(
-      `ATOM  ${String(atomNum++).padStart(5, ' ')}  CA  ${resName} A${String(resSeq).padStart(4, ' ')}    ` +
-      `${ca.x.toFixed(3).padStart(8, ' ')}` +
-      `${ca.y.toFixed(3).padStart(8, ' ')}` +
-      `${ca.z.toFixed(3).padStart(8, ' ')}` +
-      `  1.00 50.00           C`
-    );
-
-    lines.push(
-      `ATOM  ${String(atomNum++).padStart(5, ' ')}  C   ${resName} A${String(resSeq).padStart(4, ' ')}    ` +
-      `${cx.toFixed(3).padStart(8, ' ')}` +
-      `${cy.toFixed(3).padStart(8, ' ')}` +
-      `${cz.toFixed(3).padStart(8, ' ')}` +
-      `  1.00 48.00           C`
-    );
-
-    lines.push(
-      `ATOM  ${String(atomNum++).padStart(5, ' ')}  O   ${resName} A${String(resSeq).padStart(4, ' ')}    ` +
-      `${ox.toFixed(3).padStart(8, ' ')}` +
-      `${oy.toFixed(3).padStart(8, ' ')}` +
-      `${oz.toFixed(3).padStart(8, ' ')}` +
-      `  1.00 46.00           O`
-    );
-  }
-
-  lines.push('TER');
-  lines.push('END');
-
-  const total = clean.length || 1;
-  return {
-    pdbText: lines.join('\n'),
-    helixPercent: Number(((helixCount / total) * 100).toFixed(1)),
-    sheetPercent: Number(((sheetCount / total) * 100).toFixed(1))
-  };
-}
 
 const AA_ATOMS: Record<string, Set<string>> = {
   ALA: new Set(['N', 'CA', 'C', 'O', 'CB']),
@@ -717,123 +770,79 @@ const AA_ATOMS: Record<string, Set<string>> = {
   THR: new Set(['N', 'CA', 'C', 'O', 'CB', 'OG1', 'CG2']),
   TRP: new Set(['N', 'CA', 'C', 'O', 'CB', 'CG', 'CD1', 'CD2', 'NE1', 'CE2', 'CE3', 'CZ2', 'CZ3', 'CH2']),
   TYR: new Set(['N', 'CA', 'C', 'O', 'CB', 'CG', 'CD1', 'CD2', 'CE1', 'CE2', 'CZ', 'OH']),
-  VAL: new Set(['N', 'CA', 'C', 'O', 'CB', 'CG1', 'CG2']),
+  VAL: new Set(['N', 'CA', 'C', 'O', 'CB', 'CG1', 'CG2'])
 };
 
-/**
- * Apply substitutions and indels to a base PDB template to construct a genuine mutated homology model.
- * Updates ATOM residue 3-letter codes for substitutions within coordinates,
- * prunes non-applicable side-chain atoms to preserve physical stereochemistry,
- * removes deleted residue coordinates, and shifts residue numbering appropriately for insertions and deletions.
- */
 function applyMutationsToPdb(
   basePdbText: string,
   mutations: Array<{ position: number; modified?: string; original?: string; operation?: string; lengthChange?: number }>,
-  templateId: string
+  templateId: string,
+  targetChain?: string,
+  targetToChainResSeq?: Record<number, number>
 ): { pdbText: string; modeledCount: number; modeledPositions: number[] } {
   if (!mutations || mutations.length === 0) {
     return { pdbText: basePdbText, modeledCount: 0, modeledPositions: [] };
   }
 
-  // Sort mutations in sequence order
-  const sortedMuts = [...mutations].sort((a, b) => a.position - b.position);
+  // Translate 1-based sequence mutation positions to PDB resSeq using alignment map when present
+  const pdbPosToTargetPos = new Map<number, number>();
+  const subByPdbResSeq = new Map<number, { targetPos: number; code3: string }>();
+  const deletedPdbResSeqs = new Set<number>();
 
-  // Set of deleted residue positions
-  const deletedPositions = new Set<number>();
-  for (const m of sortedMuts) {
-    const op = (m.operation || '').toLowerCase();
-    if (op === 'deletion' && m.position) {
-      const delLen = m.lengthChange ? Math.abs(m.lengthChange) : (m.original?.length || 1);
-      for (let p = m.position; p < m.position + delLen; p++) {
-        deletedPositions.add(p);
-      }
-    }
-  }
-
-  // Map of sequence position -> mutated 3-letter code for substitutions
-  const subMap = new Map<number, string>();
-  for (const m of sortedMuts) {
+  for (const m of mutations) {
+    const pdbResSeq = targetToChainResSeq?.[m.position] ?? m.position;
+    pdbPosToTargetPos.set(pdbResSeq, m.position);
     const op = (m.operation || 'substitution').toLowerCase();
-    if (m.position && m.modified && op === 'substitution') {
-      const code3 = AA_1TO3[m.modified.toUpperCase()] || 'ALA';
-      subMap.set(m.position, code3);
+    if (op === 'deletion') {
+      deletedPdbResSeqs.add(pdbResSeq);
+    } else if (op === 'substitution' && m.modified) {
+      subByPdbResSeq.set(pdbResSeq, {
+        targetPos: m.position,
+        code3: AA_1TO3[m.modified.toUpperCase()] || 'ALA'
+      });
     }
   }
-
-  // Helper to compute coordinate shift for any residue position due to preceding indels
-  const getIndelOffset = (pos: number): number => {
-    let offset = 0;
-    for (const m of sortedMuts) {
-      if (m.position < pos) {
-        const op = (m.operation || '').toLowerCase();
-        if (op === 'insertion') {
-          offset += (m.lengthChange || (m.modified?.length || 1));
-        } else if (op === 'deletion') {
-          offset -= (m.lengthChange ? Math.abs(m.lengthChange) : (m.original?.length || 1));
-        }
-      }
-    }
-    return offset;
-  };
 
   const lines = basePdbText.split('\n');
   const modifiedLines: string[] = [
-    `HEADER    COMPUTATIONAL HOMOLOGY MODEL (MODIFIED SEQUENCE) ${new Date().toISOString().slice(0, 10)}`,
-    `TITLE     HOMOLOGY MODEL FOR MODIFIED SEQUENCE BASED ON TEMPLATE PDB: ${templateId}`,
-    `REMARK   4 PREDICTION METHOD: COMPARATIVE HOMOLOGY MUTATION MODELING`,
-    `REMARK   4 TEMPLATE PDB: ${templateId}`,
-    `REMARK   4 MUTATIONS TRACKED: ${mutations.length} total changes`,
-    `REMARK   4 DISCLAIMER: PREDICTED MODEL - NOT EXPERIMENTALLY DETERMINED`
+    `HEADER    COMPARATIVE MUTATION MODEL                    ${new Date().toISOString().slice(0, 10)}`,
+    `TITLE     MUTATED MODEL BASED ON TEMPLATE: ${templateId}`,
+    `REMARK   4 TEMPLATE COORDINATES: ${templateId}`
   ];
 
-  const matchedPositions = new Set<number>();
+  const modeledTargetPositions = new Set<number>();
 
   for (const line of lines) {
     if (line.startsWith('HEADER') || line.startsWith('TITLE')) continue;
 
     if (line.startsWith('ATOM  ') || line.startsWith('HETATM')) {
-      const origResSeqStr = line.substring(22, 26).trim();
-      const origResSeq = parseInt(origResSeqStr, 10);
-      if (!isNaN(origResSeq)) {
-        // Drop coordinates if this residue was deleted
-        if (deletedPositions.has(origResSeq)) {
-          matchedPositions.add(origResSeq);
+      const lineChain = line.substring(21, 22).trim() || 'A';
+      const origResSeq = parseInt(line.substring(22, 26).trim(), 10);
+
+      if (Number.isFinite(origResSeq) && (!targetChain || lineChain === targetChain)) {
+        if (deletedPdbResSeqs.has(origResSeq)) {
+          const tp = pdbPosToTargetPos.get(origResSeq);
+          if (tp !== undefined) modeledTargetPositions.add(tp);
           continue;
         }
 
-        const offset = getIndelOffset(origResSeq);
-        const shiftedResSeq = origResSeq + offset;
-        const formattedResSeq = String(shiftedResSeq).padStart(4, ' ');
-
-        let atomLine = line;
-        const atomName = line.substring(12, 16).trim();
-
-        // Check if a substitution exists at either the original sequence position or shifted position
-        const targetPos = subMap.has(origResSeq) ? origResSeq : (subMap.has(shiftedResSeq) ? shiftedResSeq : null);
-        if (targetPos !== null) {
-          matchedPositions.add(targetPos);
-          const newCode3 = subMap.get(targetPos)!;
-
-          // Side-chain atom compatibility check: prune incompatible atoms (e.g. Glu OE1/OE2 mutating to Val)
-          const validAtoms = AA_ATOMS[newCode3];
+        const sub = subByPdbResSeq.get(origResSeq);
+        if (sub) {
+          modeledTargetPositions.add(sub.targetPos);
+          const atomName = line.substring(12, 16).trim();
+          const validAtoms = AA_ATOMS[sub.code3];
           if (validAtoms && !validAtoms.has(atomName)) {
-            // Drop incompatible side-chain atom to avoid chemical contradictions
             continue;
           }
-
-          atomLine = atomLine.substring(0, 17) + newCode3.padEnd(3, ' ') + atomLine.substring(20);
+          modifiedLines.push(line.substring(0, 17) + sub.code3.padEnd(3, ' ') + line.substring(20));
+          continue;
         }
-
-        // Apply shifted residue sequence number
-        atomLine = atomLine.substring(0, 22) + formattedResSeq + atomLine.substring(26);
-        modifiedLines.push(atomLine);
-        continue;
       }
     }
     modifiedLines.push(line);
   }
 
-  const modeledPositions = Array.from(matchedPositions).sort((a, b) => a - b);
+  const modeledPositions = Array.from(modeledTargetPositions).sort((a, b) => a - b);
   return {
     pdbText: modifiedLines.join('\n'),
     modeledCount: modeledPositions.length,
@@ -841,14 +850,83 @@ function applyMutationsToPdb(
   };
 }
 
-/**
- * Master Structure Resolution Engine
- * Follows strict scientific honesty rules:
- * 1. EXPERIMENTAL STRUCTURE (Only when verified PDB exists and NO mutations are active)
- * 2. PREDICTED STRUCTURE (Homology model on PDB template when mutations are active)
- * 3. SEQUENCE-DERIVED VISUALIZATION (For novel proteins, DNA double helix, RNA folds without PDB)
- * 4. STRUCTURE UNAVAILABLE (When sequence is invalid or < 4 residues)
- */
+// ============================================================================
+// 5. CHAIN ALIGNMENT & COORDINATE EVALUATION
+// ============================================================================
+
+function evaluateCoordinateStructure(
+  coordText: string,
+  format: 'PDB' | 'mmCIF',
+  structureId: string,
+  targetSequence: string,
+  expectedPolymerType: 'PROTEIN' | 'DNA' | 'RNA'
+): {
+  parsedAtomCount: number;
+  invalidAtomCount: number;
+  parsedResiduesCount: number;
+  chainsCount: number;
+  matchedChainLength: number;
+  usedReverseComplement?: boolean;
+  bestAlignment: ChainSequenceAlignment | null;
+} {
+  const parsed = parseStructureText(coordText, structureId, format);
+  const matchingChains = parsed.chains.filter(c => {
+    if (expectedPolymerType === 'PROTEIN') return c.type === 'PROTEIN';
+    return c.type === 'DNA' || c.type === 'RNA';
+  });
+
+  const candidateChains = matchingChains.length > 0 ? matchingChains : parsed.chains;
+  let bestAlignment: ChainSequenceAlignment | null = null;
+  let matchedChainLength = 0;
+  let usedReverseComplement = false;
+
+  for (const chain of candidateChains) {
+    if (!chain.residues || chain.residues.length === 0) continue;
+    const chainSeq = chain.residues.map(r => r.code1).join('');
+    const chainResSeqs = chain.residues.map(r => r.resSeq);
+    const aln = alignTargetToChainSequence(targetSequence, chain.id, chainSeq, chainResSeqs, expectedPolymerType);
+
+    if (!bestAlignment || aln.score > bestAlignment.score) {
+      bestAlignment = aln;
+      matchedChainLength = chain.residues.length;
+      usedReverseComplement = false;
+    }
+  }
+
+  // For DNA duplexes, also check reverse complement if forward strand did not reach strong alignment
+  if (
+    expectedPolymerType === 'DNA' &&
+    (!bestAlignment || bestAlignment.sequenceIdentity < 75 || bestAlignment.alignedLength < Math.min(targetSequence.length, 8))
+  ) {
+    const rcSeq = reverseComplementNucleotide(targetSequence, false);
+    for (const chain of candidateChains) {
+      if (!chain.residues || chain.residues.length === 0) continue;
+      const chainSeq = chain.residues.map(r => r.code1).join('');
+      const chainResSeqs = chain.residues.map(r => r.resSeq);
+      const aln = alignTargetToChainSequence(rcSeq, chain.id, chainSeq, chainResSeqs, 'DNA');
+      if (!bestAlignment || aln.score > bestAlignment.score) {
+        bestAlignment = aln;
+        matchedChainLength = chain.residues.length;
+        usedReverseComplement = true;
+      }
+    }
+  }
+
+  return {
+    parsedAtomCount: parsed.parsedAtomCount ?? parsed.allAtoms.length,
+    invalidAtomCount: parsed.invalidAtomCount ?? 0,
+    parsedResiduesCount: parsed.parsedResiduesCount ?? parsed.chains.reduce((s, c) => s + c.residues.length, 0),
+    chainsCount: parsed.chains.length,
+    matchedChainLength,
+    usedReverseComplement,
+    bestAlignment
+  };
+}
+
+// ============================================================================
+// 6. MASTER REAL STRUCTURE RESOLUTION ENGINE
+// ============================================================================
+
 export async function resolveStructureForSequence(
   params: ResolveStructureParams
 ): Promise<StructureResolutionResult> {
@@ -856,715 +934,886 @@ export async function resolveStructureForSequence(
     sequence,
     sequenceId = 'seq_unknown',
     sequenceVersion = 'v1',
-    accession,
-    sequenceType: rawSequenceType = 'PROTEIN',
-    allowSequenceDerivedFallback = true,
-    mutations = [],
+    accession: rawAccession,
+    sequenceType: rawSequenceType,
+    preferredPdbId,
+    mutations: rawMutations = [],
     originalSequence,
     templatePdbId,
-    templatePdbText
+    templatePdbText,
+    autoPredict = false
   } = params;
-  const sequenceType = (rawSequenceType || 'PROTEIN').toUpperCase().trim();
-  const cleanSeq = sequence.toUpperCase().replace(/[^A-Z]/g, '');
-  const cleanOrigSeq = originalSequence ? originalSequence.toUpperCase().replace(/[^A-Z]/g, '') : cleanSeq;
-  const seqHash = calculateSequenceHash(cleanSeq);
 
-  // Check cache
-  const cacheKey = `${seqHash}_${mutations.length}_${sequenceVersion}_${sequenceType}_${templatePdbId || ''}_${allowSequenceDerivedFallback}`;
+  const classified = classifyUniversalInput(sequence, rawSequenceType, rawAccession);
+  const cleanSeq = classified.cleanSeq;
+  const accession = classified.accession;
+  const parsedOrig = originalSequence ? parseBiologicalInput(originalSequence) : null;
+  const cleanOrigSeq = (parsedOrig?.sequence || originalSequence || cleanSeq).toUpperCase().replace(/[^A-Z]/g, '');
+  const seqHash = calculateSequenceHash(cleanSeq);
+  const origHash = calculateSequenceHash(cleanOrigSeq);
+  const requestedId = (preferredPdbId || templatePdbId || '').trim().toUpperCase();
+
+  // Compute mutations automatically if originalSequence differs and caller didn't pass explicit mutation array
+  const effectiveMutations = (rawMutations && rawMutations.length > 0)
+    ? rawMutations
+    : (cleanOrigSeq && cleanSeq && cleanOrigSeq !== cleanSeq
+        ? computeSequenceDiffMutations(cleanOrigSeq, cleanSeq)
+        : []);
+
+  const hasIndels = effectiveMutations.some(m => {
+    const op = (m.operation || 'substitution').toLowerCase();
+    return op === 'insertion' || op === 'deletion' || (typeof m.lengthChange === 'number' && m.lengthChange !== 0);
+  });
+  const mutSig = effectiveMutations.map(m => `${m.position}:${m.original || ''}>${m.modified || ''}:${m.operation || 'sub'}`).join('|');
+
+  if (classified.polymerType === 'UNKNOWN') {
+    return buildUnavailableResult(
+      sequenceId,
+      sequenceVersion,
+      seqHash,
+      cleanSeq.length,
+      classified.invalidReason || 'Unable to classify sequence into DNA, RNA, or Protein.'
+    );
+  }
+
+  const sequenceType = classified.polymerType;
+  const cacheKey = `${seqHash}_${origHash}_${mutSig}_${sequenceVersion}_${sequenceType}_${accession || ''}_${requestedId}_${autoPredict ? 'pred' : 'nopred'}`;
   if (structureCache.has(cacheKey)) {
     const cached = structureCache.get(cacheKey)!;
     return { ...cached, status: 'SYNCHRONIZED' };
   }
 
-  console.log(`[StructureService] Resolving 3D structure for ${accession || sequenceId} (type=${sequenceType}, len=${cleanSeq.length}, hash=${seqHash.slice(0, 8)})...`);
+  console.log(
+    `[StructureService] Resolving genuine structure for ${accession || sequenceId} (type=${sequenceType}, len=${cleanSeq.length}, diffs=${effectiveMutations.length}, preferred=${requestedId || 'auto'})`
+  );
 
-  // Direct template modeling when template coordinates are supplied
-  if (templatePdbText && mutations.length > 0) {
-    const { pdbText: mutatedPdbText, modeledCount, modeledPositions } = applyMutationsToPdb(templatePdbText, mutations, templatePdbId || 'TEMPLATE');
-    const mutCoverage = extractPdbCoverage(mutatedPdbText, cleanSeq.length);
-    const isPartial = mutCoverage.isPartial;
-
-    const result: StructureResolutionResult = {
-      id: `struct_${templatePdbId || 'template'}_mut_${seqHash.slice(0, 8)}`,
-      sequenceId,
-      sequenceVersion,
-      sequenceHash: seqHash,
-      sequenceLength: cleanSeq.length,
-      structureFormat: 'PDB',
-      structureType: isPartial ? 'PARTIAL' : 'PREDICTED',
-      source: `Homology Mutation Model (Template: ${templatePdbId || 'Base Structure'})`,
-      sourceId: `${templatePdbId || 'MODEL'}-MOD`,
-      resolution: undefined,
-      experimentalMethod: undefined,
-      predictionMethod: `Template-Based Homology Modeling (Point Mutagenesis on ${templatePdbId || 'Template Coordinates'})`,
-      confidence: {
-        metric: 'Homology Modeling',
-        value: `Template ${templatePdbId || 'Model'} (${modeledCount}/${mutations.length} mutations in 3D model)`,
-        description: modeledCount > 0
-          ? `Derived from template crystal structure with ${modeledCount} mutation(s) modeled inside coordinates (${modeledPositions.join(', ')}). ${mutations.length - modeledCount} mutation(s) are outside structure coverage (Unmodeled).`
-          : `Derived from template structure. All ${mutations.length} mutations fall outside the partial structure coordinates (${mutCoverage.startResSeq}–${mutCoverage.endResSeq}) and are tracked honestly as Unmodeled.`
-      },
-      coverageInfo: mutCoverage,
-      pdbText: mutatedPdbText,
-      chainsCount: 1,
-      residuesCount: mutCoverage.coveredResiduesCount,
-      mutationsTracked: modeledCount,
-      status: 'SYNCHRONIZED',
-      generatedAt: new Date().toISOString()
-    };
-
-    structureCache.set(cacheKey, result);
-    return result;
-  }
-
-  // CASE 4: STRUCTURE UNAVAILABLE for empty / very short sequences
   if (!cleanSeq || cleanSeq.length < 4) {
-    const result: StructureResolutionResult = {
-      id: `struct_unavail_${seqHash.slice(0, 8)}`,
-      sequenceId,
-      sequenceVersion,
-      sequenceHash: seqHash,
-      sequenceLength: cleanSeq.length,
-      structureFormat: 'PDB',
-      structureType: 'UNAVAILABLE',
-      source: 'None',
-      sourceId: undefined,
-      resolution: undefined,
-      experimentalMethod: undefined,
-      predictionMethod: undefined,
-      confidence: {
-        metric: 'Status',
-        value: 'Structure Unavailable',
-        description: 'Sequence too short (< 4 residues) or invalid to resolve stereochemical 3D fold.'
-      },
-      coverageInfo: undefined,
-      pdbText: '',
-      chainsCount: 0,
-      residuesCount: 0,
-      mutationsTracked: 0,
-      status: 'SYNCHRONIZED',
-      generatedAt: new Date().toISOString()
-    };
-    return result;
+    return buildUnavailableResult(sequenceId, sequenceVersion, seqHash, cleanSeq.length,
+      'Sequence length (< 4 residues) is too short for macromolecular structure resolution.');
   }
 
-  // 1. Direct 4-character PDB accession check or supplied template PDB ID
-  let experimentalMatch: { pdbId: string; entityId?: string; chain?: string; identity: number } | null = null;
-  let candidateUniProtId: string | null = null;
+  // Step 1: If nucleotide (DNA/RNA), search experimental NA PDBs first (up to 5000 nt),
+  // OR resolve annotated NCBI coding sequence (CDS) -> encoded protein structure.
+  let targetProteinSeq = sequenceType === 'PROTEIN' ? cleanSeq : '';
+  let targetPolymerType: 'PROTEIN' | 'DNA' | 'RNA' = sequenceType === 'PROTEIN' ? 'PROTEIN' : (sequenceType === 'RNA' ? 'RNA' : 'DNA');
+  let ncbiCdsInfo: NcbiCdsInfo | null = null;
+  let comparisonBaseSeq = sequenceType === 'PROTEIN' ? cleanOrigSeq : '';
 
-  if (templatePdbId) {
-    const cleanTpl = templatePdbId.trim().toUpperCase();
-    const tplMatch = cleanTpl.match(/^([0-9][a-zA-Z0-9]{3})/i);
-    if (tplMatch) {
-      experimentalMatch = { pdbId: tplMatch[1].toUpperCase(), chain: 'A', identity: 1.0 };
+  if (sequenceType === 'DNA' || sequenceType === 'RNA') {
+    const cleanAcc = accession?.trim() || '';
+    const isAccessionPdbCode = /^[0-9][A-Z0-9]{3}$/i.test(cleanAcc);
+
+    // 1A. Search RCSB PDB directly for genuine DNA / RNA experimental structures
+    if (cleanOrigSeq.length >= 6 && cleanOrigSeq.length <= 5000) {
+      const naMatches = await searchRcsbExperimentalMatches(cleanOrigSeq, sequenceType === 'RNA' ? 'rna' : 'dna', 8);
+      const naCandidatesToTry: string[] = [];
+      if (/^[0-9][A-Z0-9]{3}$/i.test(requestedId)) naCandidatesToTry.push(requestedId);
+      if (isAccessionPdbCode && !naCandidatesToTry.includes(cleanAcc.toUpperCase())) {
+        naCandidatesToTry.push(cleanAcc.toUpperCase());
+      }
+      for (const hit of naMatches) {
+        if (!naCandidatesToTry.includes(hit.pdbId) && naCandidatesToTry.length < 5) {
+          naCandidatesToTry.push(hit.pdbId);
+        }
+      }
+
+      const naCandidateSummaries: StructureCandidateSummary[] = naMatches.map(m => ({
+        id: m.pdbId,
+        source: 'RCSB PDB',
+        classification: 'Experimental'
+      }));
+
+      let bestNaResult: StructureResolutionResult | null = null;
+      let bestNaRank = -1;
+
+      for (const pdbId of naCandidatesToTry) {
+        const dl = await downloadRcsbCoordinates(pdbId);
+        if (!dl) continue;
+        const evalRes = evaluateCoordinateStructure(dl.text, dl.format, pdbId, cleanOrigSeq, sequenceType);
+        const aln = evalRes.bestAlignment;
+        if (evalRes.parsedAtomCount === 0 || !aln) continue;
+
+        const minAligned = Math.min(cleanOrigSeq.length, 8);
+        if (aln.sequenceIdentity < 75 || aln.alignedLength < minAligned) continue;
+
+        const compactness = aln.alignedLength / Math.max(aln.alignedLength, evalRes.matchedChainLength || aln.alignedLength);
+        const rankScore = aln.coveredResiduesCount * (aln.sequenceIdentity / 100) * (0.5 + 0.5 * compactness);
+
+        if (requestedId === pdbId || rankScore > bestNaRank) {
+          bestNaRank = rankScore;
+          const details = await fetchRcsbEntryDetails(pdbId);
+          const isPartial = aln.coveragePercent < 95;
+          bestNaResult = {
+            id: `struct_${pdbId}_ch${aln.chainId}_${seqHash.slice(0, 8)}`,
+            sequenceId,
+            sequenceVersion,
+            sequenceHash: seqHash,
+            sequenceLength: cleanSeq.length,
+            detectedPolymerType: sequenceType,
+            structureFormat: dl.format,
+            structureType: isPartial ? 'PARTIAL' : 'EXPERIMENTAL',
+            classification: 'Experimental',
+            source: 'RCSB PDB',
+            sourceId: pdbId,
+            matchedChainId: aln.chainId,
+            sequenceIdentity: aln.sequenceIdentity,
+            resolution: details.resolution,
+            experimentalMethod: details.method || 'X-ray Diffraction',
+            confidence: {
+              metric: 'Sequence Alignment',
+              value: `${aln.sequenceIdentity}% identity · ${aln.coveragePercent}% coverage`,
+              description: `${details.title ? `${details.title}. ` : ''}Experimental ${sequenceType} chain ${aln.chainId}${evalRes.usedReverseComplement ? ' (complementary strand)' : ''}.`
+            },
+            coverageInfo: {
+              startResSeq: aln.targetStart || 1,
+              endResSeq: aln.targetEnd || cleanSeq.length,
+              coveredResiduesCount: aln.coveredResiduesCount,
+              totalSequenceLength: cleanSeq.length,
+              coveragePercent: aln.coveragePercent,
+              isPartial,
+              unresolvedRegions: aln.missingRegions,
+              chain: aln.chainId,
+              sequenceIdentity: aln.sequenceIdentity,
+              coverageLabel: `Chain ${aln.chainId}: ${aln.coveredResiduesCount} / ${cleanSeq.length} nt (${aln.coveragePercent}% coverage, ${aln.sequenceIdentity}% identity)`,
+              targetToChainResSeq: aln.targetToChainResSeq
+            },
+            missingRegions: aln.missingRegions,
+            parsedAtomCount: evalRes.parsedAtomCount,
+            invalidAtomCount: evalRes.invalidAtomCount,
+            parsedResiduesCount: evalRes.parsedResiduesCount,
+            candidateStructures: naCandidateSummaries,
+            modificationRelation: cleanOrigSeq !== cleanSeq ? {
+              hasOriginalComparison: true,
+              diffCount: effectiveMutations.length,
+              modeledDiffCount: 0,
+              hasIndels,
+              note: 'Aligned to baseline nucleic acid template; experimental coordinate editing is read-only for nucleotide bases.'
+            } : undefined,
+            pdbText: dl.text,
+            chainsCount: evalRes.chainsCount,
+            residuesCount: evalRes.parsedResiduesCount,
+            mutationsTracked: effectiveMutations.length,
+            status: 'SYNCHRONIZED',
+            generatedAt: new Date().toISOString()
+          };
+          if (requestedId === pdbId) break;
+        }
+      }
+
+      if (bestNaResult) {
+        structureCache.set(cacheKey, bestNaResult);
+        return bestNaResult;
+      }
+    }
+
+    // 1B. If no direct NA crystal/NMR structure exists and an NCBI coding nucleotide accession is supplied,
+    // retrieve annotated CDS & translate to resolve the encoded protein structure.
+    if (cleanAcc && !isAccessionPdbCode && !/^(NR_|XR_)/i.test(cleanAcc)) {
+      ncbiCdsInfo = await fetchNcbiCdsAnnotation(cleanAcc, cleanOrigSeq);
+      if (ncbiCdsInfo && ncbiCdsInfo.translatedProteinSeq.length >= 10) {
+        targetProteinSeq = ncbiCdsInfo.translatedProteinSeq;
+        comparisonBaseSeq = ncbiCdsInfo.translatedProteinSeq;
+        targetPolymerType = 'PROTEIN';
+        console.log(
+          `[StructureService] Translated NCBI CDS (${ncbiCdsInfo.nucleotideAccession} -> ${ncbiCdsInfo.proteinAccession || 'ORF'}): ${targetProteinSeq.length} aa`
+        );
+      }
     }
   }
 
-  const pdbAccessionMatch = accession?.trim().match(/^([0-9][a-zA-Z0-9]{3})$/i);
-  if (!experimentalMatch && pdbAccessionMatch) {
-    const candidatePdbId = pdbAccessionMatch[1].toUpperCase();
-    experimentalMatch = { pdbId: candidatePdbId, chain: 'A', identity: 1.0 };
-  }
-
-  // 2. Biological Target Recognition:
-  // NM_000518 is NCBI RefSeq mRNA for Human Hemoglobin Subunit Beta (HBB).
-  // Its biological molecule is Hemoglobin Subunit Beta, whose experimental crystal structure is 4HHB (Chain B, 1.74 Å).
-  const isNm000518 = Boolean(
-    accession?.toUpperCase().includes('NM_000518') ||
-    cleanOrigSeq.includes('ACATTTGCTTCTGACACA') ||
-    cleanSeq.includes('ACATTTGCTTCTGACACA') ||
-    cleanOrigSeq.includes('ACAUUUGCUUCUGACACA') ||
-    cleanSeq.includes('ACAUUUGCUUCUGACACA')
-  );
-
-  // NM_007294 is NCBI RefSeq mRNA for Human BRCA1 (transcript variant 1, 7,224 nt).
-  const isNm007294 = Boolean(
-    accession?.toUpperCase().includes('NM_007294') ||
-    cleanOrigSeq.includes('AGCUCGCUCGGGUUCAUUG') ||
-    cleanSeq.includes('AGCUCGCUCGGGUUCAUUG') ||
-    cleanOrigSeq.includes('AGCTCGCTCGGGTTCATTG') ||
-    cleanSeq.includes('AGCTCGCTCGGGTTCATTG')
-  );
-
-  // Requirement 8 & 10: Authoritative molecule classification and honest structure availability.
-  // NM_007294.4 is a 7,224 nt single-stranded eukaryotic mRNA transcript.
-  // Full-length mRNA transcripts do NOT possess static 3D crystal structures in RCSB PDB.
-  // Return honest UNAVAILABLE state rather than generating fabricated coordinates or pseudo-helices.
-  if (isNm007294 && (sequenceType === 'RNA' || sequenceType === 'DNA')) {
-    console.log(`[StructureService] NM_007294.4 is a human mRNA transcript (7,224 nt). Generating A-form RNA tertiary folded model.`);
-    const pdbText = generateRnaBackbonePdb(cleanSeq, 'NM_007294.4 BRCA1 Transcript A-Form Fold Model');
-    const coverage = extractPdbCoverage(pdbText, cleanSeq.length);
-    const result: StructureResolutionResult = {
-      id: `struct_nm007294_${seqHash.slice(0, 8)}`,
+  // If template coordinates were explicitly passed with mutations
+  if (templatePdbText && effectiveMutations.length > 0 && targetProteinSeq) {
+    const evalTpl = evaluateCoordinateStructure(templatePdbText, 'PDB', templatePdbId || 'TEMPLATE', comparisonBaseSeq || targetProteinSeq, 'PROTEIN');
+    const aln = evalTpl.bestAlignment;
+    const { pdbText: mutatedPdbText, modeledCount, modeledPositions } = applyMutationsToPdb(
+      templatePdbText, effectiveMutations, templatePdbId || 'TEMPLATE', aln?.chainId, aln?.targetToChainResSeq
+    );
+    const covered = aln?.coveredResiduesCount ?? evalTpl.parsedResiduesCount;
+    const totalLen = targetProteinSeq.length;
+    const covPct = totalLen > 0 ? Number(((covered / totalLen) * 100).toFixed(1)) : 0;
+    const missingRegions = aln?.missingRegions || [];
+    const resObj: StructureResolutionResult = {
+      id: `struct_${templatePdbId || 'tpl'}_mut_${seqHash.slice(0, 8)}`,
       sequenceId,
       sequenceVersion,
       sequenceHash: seqHash,
-      sequenceLength: cleanSeq.length,
+      sequenceLength: totalLen,
+      detectedPolymerType: sequenceType,
       structureFormat: 'PDB',
       structureType: 'PREDICTED',
-      source: 'A-Form RNA Tertiary Fold Model (NCBI RefSeq NM_007294.4)',
-      sourceId: 'NM_007294.4-PREDICTED',
-      resolution: undefined,
-      experimentalMethod: undefined,
-      predictionMethod: 'A-Form RNA Secondary & Tertiary Fold Prediction Model',
-      confidence: {
-        metric: 'Fold Confidence',
-        value: 'Predicted Secondary Fold (High Confidence)',
-        description: 'Single-stranded eukaryotic mRNA tertiary fold predicted via thermodynamic secondary structure constraints and canonical A-form helical parameters.'
-      },
-      coverageInfo: coverage,
-      pdbText,
-      chainsCount: 1,
-      residuesCount: coverage.coveredResiduesCount,
-      mutationsTracked: 0,
-      status: 'SYNCHRONIZED',
-      generatedAt: new Date().toISOString()
-    };
-    structureCache.set(cacheKey, result);
-    return result;
-  }
-
-  const isP53 = cleanOrigSeq.startsWith('MEEPQSDPSVEPPLSQETFSDLWKLLPENNVLSPLPSQAMDDLMLSPDDIEQWFTEDPG') ||
-                cleanSeq.startsWith('MEEPQSDPSVEPPLSQETFSDLWKLLPENNVLSPLPSQAMDDLMLSPDDIEQWFTEDPG') ||
-                (accession === 'NP_000537' || accession === 'P04637' ||
-                 cleanOrigSeq.includes('TYSPALNKMFCQLAKTCPVQLWVDSTPPPGTRVRAMAIYKQSQHMTEVVRRC') ||
-                 cleanSeq.includes('TYSPALNKMFCQLAKTCPVQLWVDSTPPPGTRVRAMAIYKQSQHMTEVVRRC') ||
-                 cleanOrigSeq.length === 388 || cleanOrigSeq.length === 393);
-
-  const isHemoglobin = isNm000518 ||
-                       cleanOrigSeq.startsWith('VHLTPEEKSAVTALWGKVNVDEVGGEALGRLLVVYPWTQRFFESFGDLSTPDAVMGNPK') ||
-                       cleanSeq.startsWith('VHLTPEEKSAVTALWGKVNVDEVGGEALGRLLVVYPWTQRFFESFGDLSTPDAVMGNPK') ||
-                       (accession === 'NP_000509' || accession === 'P68871' || accession?.includes('4HHB'));
-
-  const isInsulin = cleanOrigSeq.startsWith('MALWMRLLPLLALLALWGPDPAAAFVNQHLCGSHLVEALYLVCGERGFFYTPKT') ||
-                    cleanSeq.startsWith('MALWMRLLPLLALLALWGPDPAAAFVNQHLCGSHLVEALYLVCGERGFFYTPKT') ||
-                    (accession === 'NP_000198' || accession === 'P01308' || accession?.includes('1TRZ'));
-
-  const isBrca1 = cleanOrigSeq.startsWith('MDLSALRVEEVQNVINAMQKILECPICLELIKEPVSTKCDHIFCKFCMLKLLNQKKGPSQ') ||
-                  cleanSeq.startsWith('MDLSALRVEEVQNVINAMQKILECPICLELIKEPVSTKCDHIFCKFCMLKLLNQKKGPSQ') ||
-                  (accession === 'NP_007294' || accession === 'NP_009225' || accession === 'P38398' || accession?.includes('1JM7') || (accession?.toUpperCase().includes('BRCA1') && sequenceType === 'PROTEIN'));
-
-  const isSpikeRbd = cleanOrigSeq.startsWith('NLCPFGEVFNATRFASVYAWNRKRISNCVADYSVLYNSASFSTFKCYGVSPTKLNDLCFT') ||
-                     cleanSeq.startsWith('NLCPFGEVFNATRFASVYAWNRKRISNCVADYSVLYNSASFSTFKCYGVSPTKLNDLCFT') ||
-                     (accession === 'YP_009724390' || accession === 'P0DTC2' || accession?.includes('6M0J'));
-
-  const isCrambin = cleanOrigSeq.startsWith('TTCCPSIVARSNFNVCRLPGTPEAICATYTGCIIIPGATCPGDYAN') ||
-                    cleanSeq.startsWith('TTCCPSIVARSNFNVCRLPGTPEAICATYTGCIIIPGATCPGDYAN') ||
-                    (accession?.includes('1CRN') && (cleanSeq.length === 46 || cleanOrigSeq.length === 46));
-
-  const isGfp = cleanOrigSeq.startsWith('MSKGEELFTGVVPILVELDGDVNGHKFSVSGEGEGDATYGKLTLKFICTTGKLPVPWPT') ||
-                cleanSeq.startsWith('MSKGEELFTGVVPILVELDGDVNGHKFSVSGEGEGDATYGKLTLKFICTTGKLPVPWPT');
-
-  if (!experimentalMatch) {
-    if (isHemoglobin) {
-      // 4HHB: Canonical 1.74 Å X-ray crystal structure of human deoxyhemoglobin (Chain B)
-      experimentalMatch = { pdbId: '4HHB', chain: 'B', identity: 1.0 };
-      candidateUniProtId = 'P68871';
-    } else if (isP53) {
-      // 1TUP: Canonical 2.2 Å X-ray crystal structure of human p53 core domain bound to DNA (Chain B)
-      experimentalMatch = { pdbId: '1TUP', chain: 'B', identity: 1.0 };
-      candidateUniProtId = 'P04637';
-    } else if (isInsulin) {
-      // 1TRZ: Canonical 1.60 Å X-ray crystal structure of human insulin (Chain B)
-      experimentalMatch = { pdbId: '1TRZ', chain: 'B', identity: 1.0 };
-      candidateUniProtId = 'P01308';
-    } else if (isBrca1) {
-      // 1JM7: Canonical 2.50 Å NMR structure of BRCA1 RING domain (Chain A)
-      experimentalMatch = { pdbId: '1JM7', chain: 'A', identity: 1.0 };
-      candidateUniProtId = 'P38398';
-    } else if (isSpikeRbd) {
-      // 6M0J: Canonical 2.45 Å X-ray crystal structure of SARS-CoV-2 RBD bound to ACE2 (Chain E)
-      experimentalMatch = { pdbId: '6M0J', chain: 'E', identity: 1.0 };
-      candidateUniProtId = 'P0DTC2';
-    } else if (isCrambin) {
-      // 1CRN: 0.54 Å ultra-high resolution X-ray crystal structure of crambin (Chain A)
-      experimentalMatch = { pdbId: '1CRN', chain: 'A', identity: 1.0 };
-      candidateUniProtId = 'P01542';
-    } else if (isGfp) {
-      experimentalMatch = { pdbId: '1W7S', chain: 'A', identity: 1.0 };
-      candidateUniProtId = 'P42212';
-    } else if (sequenceType === 'DNA' && (cleanOrigSeq.includes('CGCGAATTCGCG') || cleanSeq.includes('CGCGAATTCGCG') || accession?.includes('1BNA'))) {
-      // 1BNA: Canonical 1.90 Å X-ray crystal structure of B-DNA dodecamer (Dickerson dodecamer)
-      experimentalMatch = { pdbId: '1BNA', chain: 'A', identity: 1.0 };
-    } else if (sequenceType === 'RNA' && (cleanOrigSeq.includes('GCGGAUUUAGCUCAGUUGGGAGAGCGCCAGACUGAAGAUCUGGAGGUCCUGUGUUCGAUCCACAGAAUUCGCACCA') || accession?.includes('1EHZ'))) {
-      // 1EHZ: Canonical 1.93 Å X-ray crystal structure of yeast phenylalanine tRNA
-      experimentalMatch = { pdbId: '1EHZ', chain: 'A', identity: 1.0 };
-    } else if (sequenceType === 'PROTEIN') {
-      // Query RCSB PDB sequence search on original sequence first, then modified
-      if (cleanOrigSeq.length >= 20) {
-        experimentalMatch = await searchRcsbExperimentalMatch(cleanOrigSeq, 'protein');
-      }
-      if (!experimentalMatch && cleanSeq.length >= 20 && cleanSeq !== cleanOrigSeq) {
-        experimentalMatch = await searchRcsbExperimentalMatch(cleanSeq, 'protein');
-      }
-    } else if (sequenceType === 'DNA' || sequenceType === 'RNA') {
-      const naType = sequenceType === 'DNA' ? 'dna' : 'rna';
-      if (cleanOrigSeq.length >= 15 && cleanOrigSeq.length <= 500) {
-        experimentalMatch = await searchRcsbExperimentalMatch(cleanOrigSeq, naType);
-      }
-      if (!experimentalMatch && cleanSeq.length >= 15 && cleanSeq.length <= 500 && cleanSeq !== cleanOrigSeq) {
-        experimentalMatch = await searchRcsbExperimentalMatch(cleanSeq, naType);
-      }
-    }
-  }
-
-  // Detect UniProt identifier from accession if available
-  if (!candidateUniProtId && accession && sequenceType === 'PROTEIN') {
-    const upMatch = accession.trim().match(/^([OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2})$/i);
-    if (upMatch) {
-      candidateUniProtId = upMatch[1].toUpperCase();
-    } else {
-      // Fast UniProt API search for NCBI accession or protein symbol
-      try {
-        const upRes = await fetch(`https://rest.uniprot.org/uniprotkb/search?query=${encodeURIComponent(accession)}&size=1&format=json`, {
-          headers: { 'User-Agent': 'BioCodeStudio/1.0' }
-        });
-        if (upRes.ok) {
-          const upData = await upRes.json();
-          if (upData.results?.[0]?.primaryAccession) {
-            candidateUniProtId = upData.results[0].primaryAccession;
-          }
-        }
-      } catch {}
-    }
-  }
-
-  // CASE 1: EXPERIMENTAL STRUCTURE (When no mutations are active)
-  if (experimentalMatch && mutations.length === 0) {
-    const pdbText = await downloadRcsbPdbText(experimentalMatch.pdbId);
-    if (pdbText) {
-      const details = await fetchRcsbEntryDetails(experimentalMatch.pdbId);
-      const coverage = extractPdbCoverage(pdbText, cleanSeq.length, experimentalMatch.chain);
-
-      const result: StructureResolutionResult = {
-        id: `struct_${experimentalMatch.pdbId}_${seqHash.slice(0, 8)}`,
-        sequenceId,
-        sequenceVersion,
-        sequenceHash: seqHash,
-        sequenceLength: cleanSeq.length,
-        structureFormat: 'PDB',
-        structureType: 'EXPERIMENTAL',
-        source: isNm000518 ? 'PDB (Encoded Beta-Globin Domain)' : 'PDB',
-        sourceId: experimentalMatch.pdbId,
-        resolution: details.resolution || '1.74 Å',
-        experimentalMethod: details.method || 'X-ray Diffraction',
-        confidence: isNm000518 ? {
-          metric: 'Structure Provenance',
-          value: 'Partial Experimental Structure (4HHB Chain B)',
-          description: `Real 1.74 Å X-ray crystal structure coordinates from RCSB PDB 4HHB (Chain B). Represents the translated 146 aa coding domain of hemoglobin subunit beta; UTR regions (147–${cleanSeq.length}) are unmodeled.`
-        } : undefined,
-        coverageInfo: coverage,
-        pdbText,
-        chainsCount: 1,
-        residuesCount: coverage.coveredResiduesCount,
-        mutationsTracked: 0,
-        status: 'SYNCHRONIZED',
-        generatedAt: new Date().toISOString()
-      };
-
-      structureCache.set(cacheKey, result);
-      return result;
-    }
-  }
-
-  // CASE 2: MUTATED HOMOLOGY MODEL (When mutations are active on an experimental template)
-  if (experimentalMatch && mutations.length > 0) {
-    const pdbText = await downloadRcsbPdbText(experimentalMatch.pdbId);
-    if (pdbText) {
-      const { pdbText: mutatedPdbText, modeledCount, modeledPositions } = applyMutationsToPdb(pdbText, mutations, experimentalMatch.pdbId);
-      const mutCoverage = extractPdbCoverage(mutatedPdbText, cleanSeq.length, experimentalMatch.chain);
-
-      const result: StructureResolutionResult = {
-        id: `struct_${experimentalMatch.pdbId}_mut_${seqHash.slice(0, 8)}`,
-        sequenceId,
-        sequenceVersion,
-        sequenceHash: seqHash,
-        sequenceLength: cleanSeq.length,
-        structureFormat: 'PDB',
-        structureType: 'PREDICTED',
-        source: `Homology Mutation Model (Template: ${experimentalMatch.pdbId})`,
-        sourceId: `${experimentalMatch.pdbId}-MOD`,
-        resolution: undefined,
-        experimentalMethod: undefined,
-        predictionMethod: `Template-Based Homology Modeling (Point Mutagenesis on PDB ${experimentalMatch.pdbId})`,
-        confidence: {
-          metric: 'Homology Modeling',
-          value: `Template ${experimentalMatch.pdbId} (${modeledCount}/${mutations.length} mutations in 3D model)`,
-          description: modeledCount > 0
-            ? `Derived from ${experimentalMatch.pdbId} crystal structure with ${modeledCount} mutation(s) modeled inside coordinates (${modeledPositions.join(', ')}). ${mutations.length - modeledCount} mutation(s) are outside structure coverage (Unmodeled).`
-            : `Derived from ${experimentalMatch.pdbId} crystal structure. All ${mutations.length} mutations fall outside the partial structure coordinates (${mutCoverage.startResSeq}–${mutCoverage.endResSeq}) and are tracked honestly as Unmodeled.`
-        },
-        coverageInfo: mutCoverage,
-        pdbText: mutatedPdbText,
-        chainsCount: 1,
-        residuesCount: mutCoverage.coveredResiduesCount,
-        mutationsTracked: modeledCount,
-        status: 'SYNCHRONIZED',
-        generatedAt: new Date().toISOString()
-      };
-
-      structureCache.set(cacheKey, result);
-      return result;
-    }
-  }
-
-  // CASE 3: PREDICTED STRUCTURE FALLBACK (AlphaFold DB)
-  if (candidateUniProtId) {
-    console.log(`[StructureService] Querying AlphaFold DB for genuine predicted structure: ${candidateUniProtId}...`);
-    const afResult = await searchAlphaFoldDb(candidateUniProtId);
-    if (afResult) {
-      try {
-        const afRes = await fetch(afResult.pdbUrl, { headers: { 'User-Agent': 'BioCodeStudio/1.0' } });
-        if (afRes.ok) {
-          const afPdbText = await afRes.text();
-          if (afPdbText.includes('ATOM')) {
-            let finalPdbText = afPdbText;
-            let modeledCount = 0;
-            let modeledPositions: number[] = [];
-            if (mutations.length > 0) {
-              const res = applyMutationsToPdb(afPdbText, mutations, afResult.modelEntityId);
-              finalPdbText = res.pdbText;
-              modeledCount = res.modeledCount;
-              modeledPositions = res.modeledPositions;
-            }
-            const coverage = extractPdbCoverage(finalPdbText, cleanSeq.length);
-            const isPartial = coverage.isPartial;
-
-            const result: StructureResolutionResult = {
-              id: `struct_${afResult.modelEntityId}_${mutations.length > 0 ? 'mut_' : ''}${seqHash.slice(0, 8)}`,
-              sequenceId,
-              sequenceVersion,
-              sequenceHash: seqHash,
-              sequenceLength: cleanSeq.length,
-              structureFormat: 'PDB',
-              structureType: isPartial ? 'PARTIAL' : 'PREDICTED',
-              source: mutations.length > 0
-                ? `AlphaFold Homology Model (${afResult.modelEntityId})`
-                : 'AlphaFold DB (EMBL-EBI / DeepMind)',
-              sourceId: mutations.length > 0 ? `${afResult.modelEntityId}-MOD` : afResult.modelEntityId,
-              resolution: undefined,
-              experimentalMethod: undefined,
-              predictionMethod: mutations.length > 0
-                ? `AlphaFold v2.0 Backbone with ${modeledCount} Mutation(s) Modeled`
-                : (afResult.toolUsed || 'AlphaFold Monomer v2.0'),
-              confidence: {
-                metric: 'Mean pLDDT',
-                value: `${afResult.globalMetricValue.toFixed(1)} / 100`,
-                description: 'AlphaFold predicted local distance difference test (0-100 scale). Values > 70 indicate high backbone confidence.'
-              },
-              coverageInfo: coverage,
-              pdbText: finalPdbText,
-              chainsCount: 1,
-              residuesCount: coverage.coveredResiduesCount,
-              mutationsTracked: modeledCount,
-              status: 'SYNCHRONIZED',
-              generatedAt: new Date().toISOString()
-            };
-
-            structureCache.set(cacheKey, result);
-            return result;
-          }
-        }
-      } catch (err) {
-        console.warn('[StructureService] Failed to download AlphaFold PDB:', err);
-      }
-    }
-  }
-
-  // CASE 4: MUTATIONS ACTIVE WITH TEMPLATE PDB SUPPLIED
-  if (mutations.length > 0 && templatePdbText) {
-    const { pdbText: mutatedPdbText, modeledCount } = applyMutationsToPdb(templatePdbText, mutations, templatePdbId || 'TEMPLATE');
-    const mutCoverage = extractPdbCoverage(mutatedPdbText, cleanSeq.length);
-    const result: StructureResolutionResult = {
-      id: `struct_${templatePdbId || 'template'}_mut_${seqHash.slice(0, 8)}`,
-      sequenceId,
-      sequenceVersion,
-      sequenceHash: seqHash,
-      sequenceLength: cleanSeq.length,
-      structureFormat: 'PDB',
-      structureType: 'PREDICTED',
-      source: `Homology Mutation Model (Template: ${templatePdbId || 'Base Structure'})`,
+      classification: 'Predicted',
+      source: `Template Mutagenesis (${templatePdbId || 'RCSB PDB'})`,
       sourceId: `${templatePdbId || 'MODEL'}-MOD`,
-      resolution: undefined,
-      experimentalMethod: undefined,
-      predictionMethod: `Template-Based Homology Modeling (Point Mutagenesis on ${templatePdbId || 'Template Coordinates'})`,
+      matchedChainId: aln?.chainId || 'A',
+      sequenceIdentity: aln?.sequenceIdentity ?? 100,
+      predictionMethod: `Comparative Point Mutagenesis on verified coordinates (${templatePdbId || 'Template'})`,
       confidence: {
-        metric: 'Homology Modeling',
-        value: `Template ${templatePdbId || 'Model'} (${modeledCount}/${mutations.length} mutations in 3D model)`,
-        description: `Derived from template structure with ${modeledCount} mutation(s) modeled inside coordinates.`
+        metric: 'Mutagenesis Coverage',
+        value: `${modeledCount}/${effectiveMutations.length} mutations within coordinates`,
+        description: modeledCount > 0
+          ? `Modeled mutations at positions: ${modeledPositions.join(', ')}.`
+          : `All ${effectiveMutations.length} mutations fall outside modeled structure coordinates.`
       },
-      coverageInfo: mutCoverage,
+      coverageInfo: {
+        startResSeq: aln?.targetStart || 1,
+        endResSeq: aln?.targetEnd || covered,
+        coveredResiduesCount: covered,
+        totalSequenceLength: totalLen,
+        coveragePercent: covPct,
+        isPartial: covPct < 95,
+        unresolvedRegions: missingRegions,
+        chain: aln?.chainId || 'A',
+        sequenceIdentity: aln?.sequenceIdentity ?? 100,
+        coverageLabel: `Chain ${aln?.chainId || 'A'}: ${covered} / ${totalLen} aa (${covPct}% coverage)`,
+        targetToChainResSeq: aln?.targetToChainResSeq
+      },
+      missingRegions,
+      parsedAtomCount: evalTpl.parsedAtomCount,
+      invalidAtomCount: evalTpl.invalidAtomCount,
+      parsedResiduesCount: evalTpl.parsedResiduesCount,
+      targetProteinSequence: targetProteinSeq,
+      modificationRelation: {
+        hasOriginalComparison: true,
+        diffCount: effectiveMutations.length,
+        modeledDiffCount: modeledCount,
+        hasIndels,
+        note: hasIndels ? 'Template coordinates retained; insertions/deletions require de novo folding for full backbone remodeling.' : undefined
+      },
       pdbText: mutatedPdbText,
-      chainsCount: 1,
-      residuesCount: mutCoverage.coveredResiduesCount,
+      chainsCount: evalTpl.chainsCount,
+      residuesCount: evalTpl.parsedResiduesCount,
       mutationsTracked: modeledCount,
       status: 'SYNCHRONIZED',
       generatedAt: new Date().toISOString()
     };
-    structureCache.set(cacheKey, result);
-    return result;
+    structureCache.set(cacheKey, resObj);
+    return resObj;
   }
 
-  // CASE 5: DNA NUCLEIC ACID STRUCTURE / SCHEMATIC (Requirement 4 - only if explicitly allowed)
-  if (sequenceType === 'DNA' && allowSequenceDerivedFallback === true) {
-    if (cleanSeq.length > 4000) {
-      console.log(`[StructureService] Large DNA sequence (${cleanSeq.length} bp) exceeds single-molecule boundaries. Providing representative region view (1–1,000 bp)...`);
-      const regionLength = Math.min(cleanSeq.length, 1000);
-      const regionSeq = cleanSeq.slice(0, regionLength);
-      const pdbText = generateDnaBackbonePdb(regionSeq, accession ? `B-DNA Region (1–${regionLength} of ${cleanSeq.length} bp)` : `B-DNA Genomic Sub-Region (1–${regionLength} bp)`, 1);
-      const covPercent = Math.round((regionLength / cleanSeq.length) * 100);
-      const result: StructureResolutionResult = {
-        id: `struct_dna_${seqHash.slice(0, 8)}`,
-        sequenceId,
-        sequenceVersion,
-        sequenceHash: seqHash,
-        sequenceLength: cleanSeq.length,
-        structureFormat: 'PDB',
-        structureType: 'SEQUENCE_DERIVED',
-        source: 'Idealized B-DNA Genomic Region Schematic',
-        sourceId: 'B-DNA-GENOMIC-REGION',
-        resolution: undefined,
-        experimentalMethod: undefined,
-        predictionMethod: 'Idealized Double Helix Geometric Schematic (Sub-Region Window)',
-        confidence: {
-          metric: 'Model Provenance',
-          value: `Genomic Sub-Region Schematic (1–${regionLength} bp)`,
-          description: `Large sequence (${cleanSeq.length.toLocaleString()} bp) visualized via ${regionLength} bp representative window. Use region navigation controls to inspect specific loci.`
-        },
-        coverageInfo: {
-          startResSeq: 1,
-          endResSeq: regionLength,
-          coveredResiduesCount: regionLength,
-          totalSequenceLength: cleanSeq.length,
-          coveragePercent: covPercent,
-          isPartial: true,
-          unresolvedRegions: [`${regionLength + 1}–${cleanSeq.length}`],
-          chain: 'A/B',
-          coverageLabel: `Region View: 1–${regionLength} of ${cleanSeq.length.toLocaleString()} bp (${covPercent}%)`
-        },
-        pdbText,
-        chainsCount: 2,
-        residuesCount: regionLength * 2,
-        mutationsTracked: mutations.length,
-        status: 'SYNCHRONIZED',
-        generatedAt: new Date().toISOString()
-      };
-      structureCache.set(cacheKey, result);
-      return result;
-    }
-
-    console.log(`[StructureService] Generating idealized B-DNA double helix molecular schematic for ${accession || sequenceId} (${cleanSeq.length} bp)...`);
-    const pdbText = generateDnaBackbonePdb(cleanSeq, accession ? `B-DNA Double Helix (${accession})` : 'B-DNA Double Helix Schematic', 1);
-    const result: StructureResolutionResult = {
-      id: `struct_dna_${seqHash.slice(0, 8)}`,
+  // If no protein sequence could be identified for nucleotide target (e.g. non-coding DNA/RNA with no PDB match)
+  if (!targetProteinSeq || targetProteinSeq.length < 10) {
+    return buildUnavailableResult(
       sequenceId,
       sequenceVersion,
-      sequenceHash: seqHash,
-      sequenceLength: cleanSeq.length,
-      structureFormat: 'PDB',
-      structureType: 'SEQUENCE_DERIVED',
-      source: 'Idealized B-DNA Molecular Schematic',
-      sourceId: 'B-DNA-SCHEMATIC',
-      resolution: undefined,
-      experimentalMethod: undefined,
-      predictionMethod: 'Idealized Double Helix Geometric Schematic (Right-Handed B-Form)',
-      confidence: {
-        metric: 'Model Provenance',
-        value: 'Idealized Molecular Schematic (Non-Experimental)',
-        description: 'Idealized stereochemical schematic for visualization. This is NOT an experimentally determined 3D structure or predicted folded conformation. A sequence alone does not determine exact 3D structure without experimental crystallization.'
-      },
-      coverageInfo: {
-        startResSeq: 1,
-        endResSeq: cleanSeq.length,
-        coveredResiduesCount: cleanSeq.length,
-        totalSequenceLength: cleanSeq.length,
-        coveragePercent: 100,
-        isPartial: false,
-        unresolvedRegions: [],
-        chain: 'A/B',
-        coverageLabel: `Full Schematic Coverage (1–${cleanSeq.length})`
-      },
-      pdbText,
-      chainsCount: 2,
-      residuesCount: cleanSeq.length * 2,
-      mutationsTracked: mutations.length,
-      status: 'SYNCHRONIZED',
-      generatedAt: new Date().toISOString()
-    };
-    structureCache.set(cacheKey, result);
-    return result;
+      seqHash,
+      cleanSeq.length,
+      `No experimentally determined ${sequenceType} structure exists in RCSB PDB for this sequence, and no annotated coding region (CDS) was found.`,
+      false,
+      'On-demand de novo folding supports protein sequences (10–400 amino acids).'
+    );
   }
 
-  // CASE 6: RNA NUCLEIC ACID STRUCTURE / SCHEMATIC (Requirement 4 - only if explicitly allowed)
-  if (sequenceType === 'RNA' && allowSequenceDerivedFallback === true) {
-    if (cleanSeq.length > 3000) {
-      console.log(`[StructureService] Large RNA sequence length (${cleanSeq.length} nt) exceeds single-molecule boundaries. Providing representative region view (1–800 nt)...`);
-      const regionLength = Math.min(cleanSeq.length, 800);
-      const regionSeq = cleanSeq.slice(0, regionLength);
-      const pdbText = generateRnaBackbonePdb(regionSeq, accession ? `A-Form RNA Region (1–${regionLength} of ${cleanSeq.length} nt)` : `A-Form RNA Sub-Region (1–${regionLength} nt)`, 1);
-      const covPercent = Math.round((regionLength / cleanSeq.length) * 100);
-      const result: StructureResolutionResult = {
-        id: `struct_rna_${seqHash.slice(0, 8)}`,
-        sequenceId,
-        sequenceVersion,
-        sequenceHash: seqHash,
-        sequenceLength: cleanSeq.length,
-        structureFormat: 'PDB',
-        structureType: 'SEQUENCE_DERIVED',
-        source: 'Idealized A-Form RNA Region Schematic',
-        sourceId: 'RNA-GENOMIC-REGION',
-        resolution: undefined,
-        experimentalMethod: undefined,
-        predictionMethod: 'Idealized RNA Tertiary Fold Schematic (Sub-Region Window)',
-        confidence: {
-          metric: 'Model Provenance',
-          value: `RNA Sub-Region Schematic (1–${regionLength} nt)`,
-          description: `Large RNA transcript (${cleanSeq.length.toLocaleString()} nt) visualized via ${regionLength} nt representative window. Use region navigation to inspect specific loci.`
-        },
-        coverageInfo: {
-          startResSeq: 1,
-          endResSeq: regionLength,
-          coveredResiduesCount: regionLength,
-          totalSequenceLength: cleanSeq.length,
-          coveragePercent: covPercent,
-          isPartial: true,
-          unresolvedRegions: [`${regionLength + 1}–${cleanSeq.length}`],
-          chain: 'A',
-          coverageLabel: `Region View: 1–${regionLength} of ${cleanSeq.length.toLocaleString()} nt (${covPercent}%)`
-        },
-        pdbText,
-        chainsCount: 1,
-        residuesCount: regionLength,
-        mutationsTracked: mutations.length,
-        status: 'SYNCHRONIZED',
-        generatedAt: new Date().toISOString()
-      };
-      structureCache.set(cacheKey, result);
-      return result;
+  // Step 2: Map protein accession/sequence -> UniProt (to collect authoritative PDB + AlphaFold cross-refs)
+  const accessionsToTry: string[] = [];
+  if (accession && !/^[0-9][A-Z0-9]{3}$/i.test(accession.trim())) {
+    accessionsToTry.push(accession.trim());
+  }
+  if (ncbiCdsInfo?.proteinAccession) {
+    accessionsToTry.push(ncbiCdsInfo.proteinAccession);
+  }
+
+  const uniProtRecord = await resolveUniProtRecord(accessionsToTry, comparisonBaseSeq || targetProteinSeq);
+  const candidateUniProtId = uniProtRecord?.accession;
+
+  // Step 3: Collect candidate experimental PDB entries + AlphaFold model
+  const candidateList: StructureCandidateSummary[] = [];
+  const seenCandidateIds = new Set<string>();
+
+  const addCandidate = (c: StructureCandidateSummary) => {
+    if (!seenCandidateIds.has(c.id)) {
+      seenCandidateIds.add(c.id);
+      candidateList.push(c);
+    }
+  };
+
+  // Explicit 4-char PDB code in accession or requestedId
+  if (/^[0-9][A-Z0-9]{3}$/i.test(requestedId)) {
+    addCandidate({ id: requestedId, source: 'RCSB PDB', classification: 'Experimental' });
+  }
+  if (accession && /^[0-9][A-Z0-9]{3}$/i.test(accession.trim())) {
+    addCandidate({ id: accession.trim().toUpperCase(), source: 'RCSB PDB', classification: 'Experimental' });
+  }
+
+  // Top RCSB sequence search hits
+  const rcsbSearchHits = await searchRcsbExperimentalMatches(comparisonBaseSeq || targetProteinSeq, 'protein', 6);
+  for (const hit of rcsbSearchHits) {
+    addCandidate({ id: hit.pdbId, source: 'RCSB PDB', classification: 'Experimental' });
+  }
+
+  // UniProt PDB cross-references: select top overall spans + best resolution representatives per domain region
+  if (uniProtRecord?.pdbXrefs) {
+    // Sort a copy by best resolution for domain-diverse sampling (N-term TAD, core DBD, C-term oligomerization, etc.)
+    const domainBinsSeen = new Map<number, number>();
+    const resSorted = [...uniProtRecord.pdbXrefs].sort(
+      (a, b) => (a.resolutionNumeric ?? 99) - (b.resolutionNumeric ?? 99)
+    );
+
+    // First include top 10 by largest span coverage
+    for (const xr of uniProtRecord.pdbXrefs.slice(0, 10)) {
+      addCandidate({
+        id: xr.pdbId,
+        source: 'RCSB PDB',
+        classification: 'Experimental',
+        method: xr.method,
+        resolution: xr.resolution,
+        chainSpan: xr.chains
+      });
     }
 
-    console.log(`[StructureService] Generating idealized A-form RNA tertiary fold schematic for ${accession || sequenceId} (${cleanSeq.length} nt)...`);
-    const pdbText = generateRnaBackbonePdb(cleanSeq, accession ? `A-Form RNA Fold (${accession})` : 'A-Form RNA Fold Schematic');
-    const result: StructureResolutionResult = {
-      id: `struct_rna_${seqHash.slice(0, 8)}`,
-      sequenceId,
-      sequenceVersion,
-      sequenceHash: seqHash,
-      sequenceLength: cleanSeq.length,
-      structureFormat: 'PDB',
-      structureType: 'SEQUENCE_DERIVED',
-      source: 'Idealized A-Form RNA Molecular Schematic',
-      sourceId: 'RNA-SCHEMATIC',
-      resolution: undefined,
-      experimentalMethod: undefined,
-      predictionMethod: 'Idealized RNA Tertiary Fold Schematic (A-Form)',
-      confidence: {
-        metric: 'Model Provenance',
-        value: 'Idealized Molecular Schematic (Non-Experimental)',
-        description: 'Idealized stereochemical schematic for visualization. This is NOT an experimentally determined 3D structure or predicted folded conformation. A sequence alone does not determine exact 3D structure.'
-      },
-      coverageInfo: {
-        startResSeq: 1,
-        endResSeq: cleanSeq.length,
-        coveredResiduesCount: cleanSeq.length,
-        totalSequenceLength: cleanSeq.length,
-        coveragePercent: 100,
-        isPartial: false,
-        unresolvedRegions: [],
-        chain: 'A',
-        coverageLabel: `Full Schematic Coverage (1–${cleanSeq.length})`
-      },
-      pdbText,
-      chainsCount: 1,
-      residuesCount: cleanSeq.length,
-      mutationsTracked: mutations.length,
-      status: 'SYNCHRONIZED',
-      generatedAt: new Date().toISOString()
-    };
-    structureCache.set(cacheKey, result);
-    return result;
+    // Then include up to 2 best-resolution representatives from each 30-aa structural region bin
+    for (const xr of resSorted) {
+      const startMatch = xr.chains?.match(/(\d+)\s*-/);
+      const startPos = startMatch ? parseInt(startMatch[1], 10) : 0;
+      const bin = Math.floor(startPos / 30);
+      const count = domainBinsSeen.get(bin) || 0;
+      if (count < 2 && candidateList.length < 25) {
+        domainBinsSeen.set(bin, count + 1);
+        addCandidate({
+          id: xr.pdbId,
+          source: 'RCSB PDB',
+          classification: 'Experimental',
+          method: xr.method,
+          resolution: xr.resolution,
+          chainSpan: xr.chains
+        });
+      }
+    }
+
+    // Always include explicitly requested cross-ref
+    for (const xr of uniProtRecord.pdbXrefs) {
+      if (xr.pdbId === requestedId) {
+        addCandidate({
+          id: xr.pdbId,
+          source: 'RCSB PDB',
+          classification: 'Experimental',
+          method: xr.method,
+          resolution: xr.resolution,
+          chainSpan: xr.chains
+        });
+      }
+    }
   }
 
-  // CASE 7: PROTEIN SEQUENCE-DERIVED MOLECULAR SCHEMATIC (Only if explicitly allowed)
-  if (sequenceType === 'PROTEIN' && allowSequenceDerivedFallback === true) {
-    if (cleanSeq.length <= 1500) {
-      console.log(`[StructureService] Generating sequence-derived protein secondary fold schematic for ${accession || sequenceId} (${cleanSeq.length} aa)...`);
-      const { pdbText } = generatePhysicsInformedBackbonePdb(
-        cleanSeq,
-        accession ? `Protein Secondary Structure Model (${accession})` : 'Sequence-Derived Protein Fold'
+  // Query AlphaFold DB when UniProt accession is known
+  const afMeta = candidateUniProtId ? await searchAlphaFoldDb(candidateUniProtId) : null;
+  if (afMeta) {
+    addCandidate({
+      id: afMeta.modelEntityId,
+      source: 'AlphaFold DB',
+      classification: 'Predicted',
+      method: afMeta.toolUsed,
+      confidenceScore: afMeta.globalMetricValue
+    });
+  }
+
+  // Determine which candidate to download & align first:
+  // If requestedId explicitly targets AlphaFold (AF-...) -> download AlphaFold directly
+  const isAlphaFoldRequested = requestedId.startsWith('AF-') && afMeta;
+
+  if (!isAlphaFoldRequested) {
+    // Prioritize requested PDB, otherwise evaluate top RCSB/UniProt PDB candidates sorted by alignment quality & coverage
+    const pdbIdsToTry: string[] = [];
+    if (requestedId && !requestedId.startsWith('AF-')) {
+      pdbIdsToTry.push(requestedId);
+    } else {
+      for (const c of candidateList) {
+        if (c.source === 'RCSB PDB' && pdbIdsToTry.length < 6) {
+          pdbIdsToTry.push(c.id);
+        }
+      }
+    }
+
+    let bestPdbResult: StructureResolutionResult | null = null;
+    let bestRankScore = -1;
+
+    for (const pdbId of pdbIdsToTry) {
+      const dl = await downloadRcsbCoordinates(pdbId);
+      if (!dl) continue;
+
+      const evalRes = evaluateCoordinateStructure(
+        dl.text,
+        dl.format,
+        pdbId,
+        comparisonBaseSeq || targetProteinSeq,
+        'PROTEIN'
       );
-      const result: StructureResolutionResult = {
-        id: `struct_schematic_${seqHash.slice(0, 8)}`,
-        sequenceId,
-        sequenceVersion,
-        sequenceHash: seqHash,
-        sequenceLength: cleanSeq.length,
-        structureFormat: 'PDB',
-        structureType: 'SEQUENCE_DERIVED',
-        source: 'Sequence-Derived Molecular Schematic (Not Experimental)',
-        sourceId: 'SEQ-SCHEMATIC',
-        resolution: undefined,
-        experimentalMethod: undefined,
-        predictionMethod: 'Algorithmic Secondary Structure Fold (Ramachandran-Constrained Backbone)',
-        confidence: {
-          metric: 'Model Provenance',
-          value: 'Idealized Molecular Schematic',
-          description: 'Algorithmic secondary fold model for exploratory sequence visualization. Not an experimentally determined 3D structure or predicted folded conformation. A sequence alone does not determine exact 3D structure.'
-        },
-        coverageInfo: {
-          startResSeq: 1,
-          endResSeq: cleanSeq.length,
-          coveredResiduesCount: cleanSeq.length,
-          totalSequenceLength: cleanSeq.length,
-          coveragePercent: 100,
-          isPartial: false,
-          unresolvedRegions: [],
-          chain: 'A',
-          coverageLabel: `Full Schematic Coverage (1–${cleanSeq.length})`
-        },
-        pdbText,
-        chainsCount: 1,
-        residuesCount: cleanSeq.length,
-        mutationsTracked: mutations.length,
-        status: 'SYNCHRONIZED',
-        generatedAt: new Date().toISOString()
-      };
-      structureCache.set(cacheKey, result);
-      return result;
+
+      if (evalRes.parsedAtomCount === 0 || !evalRes.bestAlignment) continue;
+      const aln = evalRes.bestAlignment;
+
+      // Reject unrelated structures (< 70% sequence identity or < min aligned residues)
+      const minAligned = Math.min((comparisonBaseSeq || targetProteinSeq).length, 8);
+      if (aln.sequenceIdentity < 70 || aln.alignedLength < minAligned) continue;
+
+      // Score candidates when auto-selecting (balance coverage * identity * chain compactness)
+      const compactness = aln.alignedLength / Math.max(aln.alignedLength, evalRes.matchedChainLength || aln.alignedLength);
+      const rankScore = aln.coveredResiduesCount * (aln.sequenceIdentity / 100) * (0.75 + 0.25 * compactness);
+      if (requestedId === pdbId || rankScore > bestRankScore) {
+        bestRankScore = rankScore;
+        const details = await fetchRcsbEntryDetails(pdbId);
+        const xrefMatch = uniProtRecord?.pdbXrefs.find(x => x.pdbId === pdbId);
+
+        let finalText = dl.text;
+        let modeledCount = 0;
+        let modeledPositions: number[] = [];
+        const hasMutations = effectiveMutations.length > 0 && dl.format === 'PDB';
+        if (hasMutations) {
+          const mutRes = applyMutationsToPdb(dl.text, effectiveMutations, pdbId, aln.chainId, aln.targetToChainResSeq);
+          finalText = mutRes.pdbText;
+          modeledCount = mutRes.modeledCount;
+          modeledPositions = mutRes.modeledPositions;
+        }
+
+        const isPartial = aln.coveragePercent < 95;
+        const cdsNote = ncbiCdsInfo
+          ? ` Encoded protein product (${ncbiCdsInfo.proteinAccession || 'CDS'}) translated from ${ncbiCdsInfo.nucleotideAccession}.`
+          : '';
+
+        bestPdbResult = {
+          id: `struct_${pdbId}_ch${aln.chainId}_${seqHash.slice(0, 8)}`,
+          sequenceId,
+          sequenceVersion,
+          sequenceHash: seqHash,
+          sequenceLength: targetProteinSeq.length,
+          detectedPolymerType: sequenceType,
+          structureFormat: dl.format,
+          structureType: hasMutations ? 'PREDICTED' : (isPartial ? 'PARTIAL' : 'EXPERIMENTAL'),
+          classification: hasMutations ? 'Predicted' : 'Experimental',
+          source: 'RCSB PDB',
+          sourceId: pdbId,
+          matchedChainId: aln.chainId,
+          sequenceIdentity: aln.sequenceIdentity,
+          resolution: details.resolution || xrefMatch?.resolution,
+          experimentalMethod: details.method || xrefMatch?.method || 'X-ray Diffraction',
+          predictionMethod: hasMutations
+            ? `Comparative Mutation Model on PDB ${pdbId} Chain ${aln.chainId}`
+            : undefined,
+          confidence: hasMutations
+            ? {
+                metric: 'Mutagenesis Coverage',
+                value: `${modeledCount}/${effectiveMutations.length} mutations in Chain ${aln.chainId}`,
+                description: modeledCount > 0
+                  ? `Mutations modeled at sequence positions ${modeledPositions.join(', ')}.${cdsNote}`
+                  : `All mutations fall outside resolved residues (${aln.targetStart}–${aln.targetEnd}).${cdsNote}`
+              }
+            : {
+                metric: 'Sequence Alignment',
+                value: `${aln.sequenceIdentity}% identity · ${aln.coveragePercent}% coverage`,
+                description: `${details.title || `Aligned target protein (${targetProteinSeq.length} aa) against PDB ${pdbId} Chain ${aln.chainId}.`}${cdsNote}`
+              },
+          coverageInfo: {
+            startResSeq: aln.targetStart || aln.chainResStart,
+            endResSeq: Math.min(aln.targetEnd || aln.chainResEnd, targetProteinSeq.length),
+            coveredResiduesCount: Math.min(aln.coveredResiduesCount, targetProteinSeq.length),
+            totalSequenceLength: targetProteinSeq.length,
+            coveragePercent: Number(((Math.min(aln.coveredResiduesCount, targetProteinSeq.length) / Math.max(1, targetProteinSeq.length)) * 100).toFixed(1)),
+            isPartial,
+            unresolvedRegions: aln.missingRegions,
+            chain: aln.chainId,
+            sequenceIdentity: aln.sequenceIdentity,
+            coverageLabel: `Chain ${aln.chainId}: ${Math.min(aln.coveredResiduesCount, targetProteinSeq.length)} / ${targetProteinSeq.length} residues (${Number(((Math.min(aln.coveredResiduesCount, targetProteinSeq.length) / Math.max(1, targetProteinSeq.length)) * 100).toFixed(1))}%)`,
+            targetToChainResSeq: aln.targetToChainResSeq
+          },
+          missingRegions: aln.missingRegions,
+          parsedAtomCount: evalRes.parsedAtomCount,
+          invalidAtomCount: evalRes.invalidAtomCount,
+          parsedResiduesCount: evalRes.parsedResiduesCount,
+          candidateStructures: candidateList,
+          targetProteinSequence: targetProteinSeq,
+          translatedFromNucleotide: Boolean(ncbiCdsInfo),
+          nucleotideAccession: ncbiCdsInfo?.nucleotideAccession,
+          ncbiProteinAccession: ncbiCdsInfo?.proteinAccession,
+          uniprotAccession: candidateUniProtId,
+          modificationRelation: effectiveMutations.length > 0 || cleanOrigSeq !== cleanSeq ? {
+            hasOriginalComparison: cleanOrigSeq !== cleanSeq || effectiveMutations.length > 0,
+            diffCount: effectiveMutations.length,
+            modeledDiffCount: modeledCount,
+            hasIndels,
+            note: hasIndels ? 'Template contains insertions/deletions vs modified sequence; on-demand prediction can fold full modified chain.' : undefined
+          } : undefined,
+          pdbText: finalText,
+          chainsCount: evalRes.chainsCount,
+          residuesCount: evalRes.parsedResiduesCount,
+          mutationsTracked: effectiveMutations.length > 0 ? modeledCount : 0,
+          status: 'SYNCHRONIZED',
+          generatedAt: new Date().toISOString()
+        };
+
+        if (requestedId === pdbId) break;
+      }
+    }
+
+    if (bestPdbResult) {
+      structureCache.set(cacheKey, bestPdbResult);
+      return bestPdbResult;
     }
   }
 
-  // FINAL: Genuine Structure Unavailable Status with Scientific Explanation (Never invent fake coordinates)
-  console.log(`[StructureService] No experimental PDB or deep learning prediction available for ${accession || sequenceId}. Returning UNAVAILABLE with biological integrity.`);
-  const unavailResult: StructureResolutionResult = {
+  // Step 4: Retrieve AlphaFold DB structure if available (fallback when no PDB selected/found or explicitly requested)
+  if (afMeta) {
+    try {
+      let coordText = '';
+      let format: 'PDB' | 'mmCIF' = 'PDB';
+      if (afMeta.pdbUrl) {
+        const res = await fetch(afMeta.pdbUrl, { headers: { 'User-Agent': HTTP_HEADERS['User-Agent'] } });
+        if (res.ok) {
+          const txt = await res.text();
+          if (txt.includes('ATOM')) coordText = txt;
+        }
+      }
+      if (!coordText && afMeta.cifUrl) {
+        const res = await fetch(afMeta.cifUrl, { headers: { 'User-Agent': HTTP_HEADERS['User-Agent'] } });
+        if (res.ok) {
+          const txt = await res.text();
+          if (txt.includes('_atom_site.')) {
+            coordText = txt;
+            format = 'mmCIF';
+          }
+        }
+      }
+
+      if (coordText) {
+        const evalAf = evaluateCoordinateStructure(
+          coordText,
+          format,
+          afMeta.modelEntityId,
+          comparisonBaseSeq || targetProteinSeq,
+          'PROTEIN'
+        );
+        if (evalAf.parsedAtomCount > 0 && evalAf.bestAlignment && evalAf.bestAlignment.sequenceIdentity >= 70) {
+          const aln = evalAf.bestAlignment;
+          let finalText = coordText;
+          let modeledCount = 0;
+          if (effectiveMutations.length > 0 && format === 'PDB') {
+            const mutRes = applyMutationsToPdb(coordText, effectiveMutations, afMeta.modelEntityId, aln.chainId, aln.targetToChainResSeq);
+            finalText = mutRes.pdbText;
+            modeledCount = mutRes.modeledCount;
+          }
+
+          const isPartial = aln.coveragePercent < 95;
+          const cdsNote = ncbiCdsInfo
+            ? ` Encoded protein product (${ncbiCdsInfo.proteinAccession || 'CDS'}) translated from ${ncbiCdsInfo.nucleotideAccession}.`
+            : '';
+          const afResult: StructureResolutionResult = {
+            id: `struct_${afMeta.modelEntityId}_${seqHash.slice(0, 8)}`,
+            sequenceId,
+            sequenceVersion,
+            sequenceHash: seqHash,
+            sequenceLength: targetProteinSeq.length,
+            detectedPolymerType: sequenceType,
+            structureFormat: format,
+            structureType: 'PREDICTED',
+            classification: 'Predicted',
+            source: 'AlphaFold DB',
+            sourceId: afMeta.modelEntityId,
+            matchedChainId: aln.chainId,
+            sequenceIdentity: aln.sequenceIdentity,
+            predictionMethod: afMeta.toolUsed,
+            confidence: {
+              metric: 'Mean pLDDT',
+              value: `${afMeta.globalMetricValue.toFixed(1)} / 100`,
+              description: `AlphaFold DB full-chain predicted model (${aln.sequenceIdentity}% identity, ${aln.coveragePercent}% coverage).${cdsNote}`
+            },
+            coverageInfo: {
+              startResSeq: aln.targetStart || aln.chainResStart,
+              endResSeq: Math.min(aln.targetEnd || aln.chainResEnd, targetProteinSeq.length),
+              coveredResiduesCount: Math.min(aln.coveredResiduesCount, targetProteinSeq.length),
+              totalSequenceLength: targetProteinSeq.length,
+              coveragePercent: Number(((Math.min(aln.coveredResiduesCount, targetProteinSeq.length) / Math.max(1, targetProteinSeq.length)) * 100).toFixed(1)),
+              isPartial,
+              unresolvedRegions: aln.missingRegions,
+              chain: aln.chainId,
+              sequenceIdentity: aln.sequenceIdentity,
+              coverageLabel: `Chain ${aln.chainId}: ${Math.min(aln.coveredResiduesCount, targetProteinSeq.length)} / ${targetProteinSeq.length} residues (${Number(((Math.min(aln.coveredResiduesCount, targetProteinSeq.length) / Math.max(1, targetProteinSeq.length)) * 100).toFixed(1))}%)`,
+              targetToChainResSeq: aln.targetToChainResSeq
+            },
+            missingRegions: aln.missingRegions,
+            parsedAtomCount: evalAf.parsedAtomCount,
+            invalidAtomCount: evalAf.invalidAtomCount,
+            parsedResiduesCount: evalAf.parsedResiduesCount,
+            candidateStructures: candidateList,
+            targetProteinSequence: targetProteinSeq,
+            translatedFromNucleotide: Boolean(ncbiCdsInfo),
+            nucleotideAccession: ncbiCdsInfo?.nucleotideAccession,
+            ncbiProteinAccession: ncbiCdsInfo?.proteinAccession,
+            uniprotAccession: candidateUniProtId,
+            modificationRelation: effectiveMutations.length > 0 || cleanOrigSeq !== cleanSeq ? {
+              hasOriginalComparison: true,
+              diffCount: effectiveMutations.length,
+              modeledDiffCount: modeledCount,
+              hasIndels
+            } : undefined,
+            pdbText: finalText,
+            chainsCount: evalAf.chainsCount,
+            residuesCount: evalAf.parsedResiduesCount,
+            mutationsTracked: modeledCount,
+            status: 'SYNCHRONIZED',
+            generatedAt: new Date().toISOString()
+          };
+
+          structureCache.set(cacheKey, afResult);
+          return afResult;
+        }
+      }
+    } catch (err) {
+      console.warn('[StructureService] Failed to download AlphaFold coordinates:', err);
+    }
+  }
+
+  // Step 5: Optional configured prediction fallback when requested automatically OR report honest Unavailable status
+  const canRunEsmFold = targetPolymerType === 'PROTEIN' && targetProteinSeq.length >= 10 && targetProteinSeq.length <= 400;
+  if (autoPredict && canRunEsmFold) {
+    try {
+      const predicted = await invokeConfiguredPredictionService(
+        targetProteinSeq,
+        sequenceId,
+        sequenceVersion,
+        seqHash
+      );
+      if (predicted && predicted.parsedAtomCount > 0) {
+        predicted.detectedPolymerType = sequenceType;
+        predicted.translatedFromNucleotide = Boolean(ncbiCdsInfo);
+        predicted.nucleotideAccession = ncbiCdsInfo?.nucleotideAccession;
+        predicted.ncbiProteinAccession = ncbiCdsInfo?.proteinAccession;
+        structureCache.set(cacheKey, predicted);
+        return predicted;
+      }
+    } catch (err) {
+      console.warn('[StructureService] Configured prediction service auto-fallback failed:', err);
+    }
+  }
+
+  const unavail = buildUnavailableResult(
+    sequenceId,
+    sequenceVersion,
+    seqHash,
+    targetProteinSeq.length,
+    canRunEsmFold
+      ? 'No matching experimental structure (RCSB PDB) or precomputed AlphaFold DB entry was found. On-demand structure prediction is available for protein sequences (10–400 residues).'
+      : 'No matching experimental structure (RCSB PDB) or AlphaFold DB entry was found for this sequence.',
+    canRunEsmFold,
+    canRunEsmFold ? 'ESMFold v1 / Configured Prediction Service (10–400 aa)' : 'Sequence exceeds single-chain prediction limit (400 aa) or is not a protein.',
+    targetProteinSeq
+  );
+  unavail.detectedPolymerType = sequenceType;
+
+  structureCache.set(cacheKey, unavail);
+  return unavail;
+}
+
+function buildUnavailableResult(
+  sequenceId: string,
+  sequenceVersion: string,
+  seqHash: string,
+  sequenceLength: number,
+  description: string,
+  predictionAvailable: boolean = false,
+  predictionReason?: string,
+  targetProteinSequence?: string
+): StructureResolutionResult {
+  return {
     id: `struct_unavail_${seqHash.slice(0, 8)}`,
     sequenceId,
     sequenceVersion,
     sequenceHash: seqHash,
-    sequenceLength: cleanSeq.length,
+    sequenceLength,
     structureFormat: 'PDB',
     structureType: 'UNAVAILABLE',
+    classification: 'Unavailable',
     source: 'None',
-    sourceId: undefined,
-    resolution: undefined,
-    experimentalMethod: undefined,
-    predictionMethod: undefined,
     confidence: {
-      metric: 'Structural Limitation',
-      value: 'Structure Unavailable',
-      description: cleanSeq.length > 1500
-        ? `Polypeptide length (${cleanSeq.length.toLocaleString()} residues) exceeds single-domain modeling boundaries (>1,500 aa). Deep learning prediction for massive macromolecular complexes requires external distributed AlphaFold HPC pipelines.`
-        : 'No experimentally determined crystal structure (RCSB PDB) or precomputed AlphaFold model is available for this sequence. In accordance with biological integrity standards, artificial coordinates are not synthesized.'
+      metric: 'Status',
+      value: 'No verified structure available',
+      description
     },
-    coverageInfo: undefined,
+    parsedAtomCount: 0,
+    invalidAtomCount: 0,
+    parsedResiduesCount: 0,
+    predictionAvailable,
+    predictionReason,
+    targetProteinSequence,
     pdbText: '',
     chainsCount: 0,
     residuesCount: 0,
-    mutationsTracked: mutations.length,
+    mutationsTracked: 0,
     status: 'SYNCHRONIZED',
     generatedAt: new Date().toISOString()
   };
+}
 
-  structureCache.set(cacheKey, unavailResult);
-  return unavailResult;
+// ============================================================================
+// 7. GENUINE ON-DEMAND PREDICTION WORKFLOW (CONFIGURABLE / ESMFold v1 API)
+// ============================================================================
+
+async function invokeConfiguredPredictionService(
+  proteinSeq: string,
+  sequenceId: string,
+  sequenceVersion: string,
+  seqHash: string
+): Promise<StructureResolutionResult> {
+  const endpointUrl = process.env.STRUCTURE_PREDICTION_API_URL?.trim() || 'https://api.esmatlas.com/foldSequence/v1/pdb/';
+  const apiKey = process.env.STRUCTURE_PREDICTION_API_KEY?.trim();
+
+  const headers: Record<string, string> = {
+    'User-Agent': HTTP_HEADERS['User-Agent']
+  };
+  if (apiKey) {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  }
+
+  let esmRes = await fetch(endpointUrl, {
+    method: 'POST',
+    headers,
+    body: proteinSeq,
+    signal: AbortSignal.timeout(25000)
+  });
+
+  if (!esmRes.ok && [502, 503, 504].includes(esmRes.status)) {
+    await new Promise((r) => setTimeout(r, 1500));
+    esmRes = await fetch(endpointUrl, {
+      method: 'POST',
+      headers,
+      body: proteinSeq,
+      signal: AbortSignal.timeout(25000)
+    });
+  }
+
+  if (!esmRes.ok) {
+    throw new Error(`Structure prediction service returned HTTP ${esmRes.status}`);
+  }
+
+  const pdbText = await esmRes.text();
+  if (!pdbText.includes('ATOM') && !pdbText.includes('_atom_site.')) {
+    throw new Error('Prediction service response did not contain valid ATOM coordinates.');
+  }
+
+  const format: 'PDB' | 'mmCIF' = pdbText.trimStart().startsWith('data_') || pdbText.includes('_atom_site.') ? 'mmCIF' : 'PDB';
+  const evalRes = evaluateCoordinateStructure(pdbText, format, 'ESMFOLD-PRED', proteinSeq, 'PROTEIN');
+  if (evalRes.parsedAtomCount === 0) {
+    throw new Error('Predicted coordinate payload contained zero valid finite atoms.');
+  }
+  const aln = evalRes.bestAlignment;
+  const isCustomEndpoint = endpointUrl !== 'https://api.esmatlas.com/foldSequence/v1/pdb/';
+
+  return {
+    id: `struct_pred_${seqHash.slice(0, 8)}`,
+    sequenceId,
+    sequenceVersion,
+    sequenceHash: seqHash,
+    sequenceLength: proteinSeq.length,
+    detectedPolymerType: 'PROTEIN',
+    structureFormat: format,
+    structureType: 'PREDICTED',
+    classification: 'Predicted',
+    source: isCustomEndpoint ? 'Configured Prediction Service' : 'ESMFold v1 (Meta AI)',
+    sourceId: `ESM-${seqHash.slice(0, 6).toUpperCase()}`,
+    matchedChainId: aln?.chainId || 'A',
+    sequenceIdentity: aln?.sequenceIdentity ?? 100,
+    predictionMethod: isCustomEndpoint ? `External Folding Service (${endpointUrl})` : 'ESMFold v1 Language Model Structure Prediction',
+    confidence: {
+      metric: 'Prediction Engine',
+      value: isCustomEndpoint ? 'Configured Predictor (De Novo)' : 'ESMFold v1 (De Novo)',
+      description: `Predicted 3D coordinates computed from ${proteinSeq.length} amino acid sequence.`
+    },
+    coverageInfo: aln ? {
+      startResSeq: aln.targetStart || 1,
+      endResSeq: aln.targetEnd || proteinSeq.length,
+      coveredResiduesCount: aln.coveredResiduesCount,
+      totalSequenceLength: proteinSeq.length,
+      coveragePercent: aln.coveragePercent,
+      isPartial: aln.coveragePercent < 95,
+      unresolvedRegions: aln.missingRegions,
+      chain: aln.chainId,
+      sequenceIdentity: aln.sequenceIdentity,
+      coverageLabel: `Chain ${aln.chainId}: ${aln.coveredResiduesCount} / ${proteinSeq.length} aa (${aln.coveragePercent}%)`,
+      targetToChainResSeq: aln.targetToChainResSeq
+    } : undefined,
+    missingRegions: aln?.missingRegions || [],
+    parsedAtomCount: evalRes.parsedAtomCount,
+    invalidAtomCount: evalRes.invalidAtomCount,
+    parsedResiduesCount: evalRes.parsedResiduesCount,
+    targetProteinSequence: proteinSeq,
+    pdbText,
+    chainsCount: evalRes.chainsCount,
+    residuesCount: evalRes.parsedResiduesCount,
+    mutationsTracked: 0,
+    status: 'SYNCHRONIZED',
+    generatedAt: new Date().toISOString()
+  };
+}
+
+export function startStructurePredictionJob(params: ResolveStructureParams): StructurePredictionJob {
+  const classified = classifyUniversalInput(params.sequence || '', params.sequenceType, params.accession);
+  const cleanSeq = classified.cleanSeq;
+  const seqHash = calculateSequenceHash(cleanSeq);
+  const jobId = `job_struct_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  const now = new Date().toISOString();
+  const job: StructurePredictionJob = {
+    jobId,
+    status: 'processing',
+    phase: 'Checking RCSB PDB & AlphaFold DB before de novo prediction...',
+    progress: 25,
+    sequenceHash: seqHash,
+    sequenceLength: cleanSeq.length,
+    params,
+    createdAt: now,
+    updatedAt: now
+  };
+
+  jobQueue.set(jobId, job);
+
+  setTimeout(async () => {
+    try {
+      const existing = await resolveStructureForSequence(params);
+      if (existing.structureType !== 'UNAVAILABLE') {
+        job.status = 'completed';
+        job.progress = 100;
+        job.phase = `Verified structure retrieved (${existing.sourceId})`;
+        job.structure = existing;
+        job.updatedAt = new Date().toISOString();
+        return;
+      }
+
+      const protSeq = existing.targetProteinSequence || cleanSeq;
+      const isProt = classified.polymerType === 'PROTEIN' || Boolean(existing.targetProteinSequence);
+      if (!isProt || protSeq.length < 10 || protSeq.length > 400) {
+        job.status = 'failed';
+        job.progress = 100;
+        job.error = 'Structure prediction supports protein sequences between 10 and 400 residues.';
+        job.phase = 'Prediction unsupported for sequence length/type';
+        job.updatedAt = new Date().toISOString();
+        return;
+      }
+
+      job.progress = 60;
+      job.phase = 'Running genuine ESMFold v1 3D inference...';
+      job.updatedAt = new Date().toISOString();
+
+      const predicted = await invokeConfiguredPredictionService(
+        protSeq,
+        params.sequenceId || 'seq_pred',
+        params.sequenceVersion || 'v1',
+        seqHash
+      );
+
+      job.status = 'completed';
+      job.progress = 100;
+      job.phase = 'Predicted 3D coordinates generated';
+      job.structure = predicted;
+      job.updatedAt = new Date().toISOString();
+    } catch (err: any) {
+      job.status = 'failed';
+      job.progress = 100;
+      job.error = err?.message || 'Failed to predict structure for sequence';
+      job.phase = 'Prediction failed';
+      job.updatedAt = new Date().toISOString();
+    }
+  }, 50);
+
+  return job;
+}
+
+export function getStructurePredictionJob(jobId: string): StructurePredictionJob | null {
+  return jobQueue.get(jobId) || null;
 }

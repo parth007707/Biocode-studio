@@ -20,7 +20,7 @@ import { ProjectDetailView } from './ProjectDetailView';
 
 interface ProjectsViewProps {
   user: any;
-  onOpenAuth: () => void;
+  authReady?: boolean;
   onOpenWorkbench?: (
     sequence: string,
     metadata?: any,
@@ -32,7 +32,7 @@ interface ProjectsViewProps {
   onOpenAiWithContext?: (context: any) => void;
 }
 
-export const ProjectsView: React.FC<ProjectsViewProps> = ({ user, onOpenAuth, onOpenWorkbench, onOpenAiWithContext }) => {
+export const ProjectsView: React.FC<ProjectsViewProps> = ({ user, authReady = true, onOpenWorkbench, onOpenAiWithContext }) => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -51,8 +51,9 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ user, onOpenAuth, on
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!authReady) return;
     loadProjects();
-  }, [user?.id]);
+  }, [user?.id, authReady]);
 
   const loadProjects = async () => {
     setLoading(true);
@@ -143,12 +144,12 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ user, onOpenAuth, on
   });
 
   return (
-    <div className="p-6 md:p-8 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 md:p-8 space-y-6 max-w-7xl mx-auto">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-[#0F172A] tracking-tight flex items-center gap-2">
-            <FolderKanban className="w-5 h-5 text-[#0284C7]" />
+            <FolderKanban className="w-5 h-5 text-[#0284C7] shrink-0" />
             <span>BioCode Research Projects</span>
           </h2>
           <p className="text-xs text-[#64748B] mt-1">
@@ -157,7 +158,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ user, onOpenAuth, on
         </div>
         <button
           onClick={() => setIsModalOpen(true)}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#0284C7] hover:bg-[#0369a1] text-white font-semibold text-xs transition-all shadow-xs cursor-pointer shrink-0"
+          className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#0284C7] hover:bg-[#0369a1] text-white font-semibold text-xs transition-all shadow-xs cursor-pointer shrink-0 w-full sm:w-auto"
         >
           <Plus className="w-4 h-4" />
           <span>Create New Project</span>
@@ -177,7 +178,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ user, onOpenAuth, on
           />
         </div>
 
-        <div className="flex items-center gap-2 text-xs">
+        <div className="flex flex-wrap items-center gap-2 text-xs">
           <button
             onClick={() => setStatusFilter('All')}
             className={`px-3 py-1.5 rounded-lg font-mono transition-colors cursor-pointer ${
@@ -211,7 +212,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ user, onOpenAuth, on
           <p className="text-xs font-mono text-[#64748B]">Loading research workspaces from Supabase...</p>
         </div>
       ) : filteredProjects.length === 0 ? (
-        <div className="p-16 text-center bg-white border border-[#E2E8F0] rounded-2xl space-y-3 shadow-xs">
+        <div className="p-8 sm:p-16 text-center bg-white border border-[#E2E8F0] rounded-2xl space-y-3 shadow-xs">
           <FolderKanban className="w-10 h-10 text-[#94A3B8] mx-auto" />
           <h3 className="text-sm font-semibold text-[#0F172A]">No matching projects found</h3>
           <p className="text-xs text-[#64748B] max-w-sm mx-auto">
@@ -240,7 +241,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ user, onOpenAuth, on
               <div
                 key={project.id}
                 onClick={() => setSelectedProjectId(project.id)}
-                className="p-6 rounded-2xl bg-white border border-[#E2E8F0] hover:border-[#38BDF8] transition-all flex flex-col justify-between space-y-4 group shadow-xs hover:shadow-md cursor-pointer"
+                className="p-4 sm:p-6 rounded-2xl bg-white border border-[#E2E8F0] hover:border-[#38BDF8] transition-all flex flex-col justify-between space-y-4 group shadow-xs hover:shadow-md cursor-pointer"
               >
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
@@ -293,7 +294,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ user, onOpenAuth, on
                   )}
                 </div>
 
-                <div className="pt-4 border-t border-[#E2E8F0] flex items-center justify-between">
+                <div className="pt-4 border-t border-[#E2E8F0] flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-4 text-xs font-mono text-[#64748B]">
                     <span className="flex items-center gap-1">
                       <Dna className="w-3.5 h-3.5 text-[#0284C7]" />
@@ -318,22 +319,22 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ user, onOpenAuth, on
 
       {/* Create Project Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-lg bg-white border border-[#E2E8F0] rounded-2xl shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="p-6 border-b border-[#E2E8F0] flex items-center justify-between">
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
+          <div className="w-full max-w-lg bg-white border border-[#E2E8F0] rounded-2xl shadow-xl overflow-hidden flex flex-col max-h-[92dvh] animate-in fade-in zoom-in-95 duration-150">
+            <div className="p-4 sm:p-6 border-b border-[#E2E8F0] flex items-center justify-between shrink-0">
               <h3 className="text-base font-bold text-[#0F172A] flex items-center gap-2">
-                <FolderKanban className="w-5 h-5 text-[#0284C7]" />
-                Create New Bioinformatics Project
+                <FolderKanban className="w-5 h-5 text-[#0284C7] shrink-0" />
+                <span>Create New Bioinformatics Project</span>
               </h3>
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="p-1.5 rounded-lg text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"
+                className="p-1.5 rounded-lg text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors shrink-0"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleCreateProject} className="p-6 space-y-4">
+            <form onSubmit={handleCreateProject} className="p-4 sm:p-6 space-y-4 overflow-y-auto">
               {errorMsg && (
                 <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
@@ -413,18 +414,18 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ user, onOpenAuth, on
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#E2E8F0]">
+              <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2.5 sm:gap-3 pt-4 border-t border-[#E2E8F0]">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2.5 rounded-xl bg-[#F1F5F9] text-[#475569] hover:bg-[#E2E8F0] hover:text-[#0F172A] text-xs font-medium transition-colors"
+                  className="w-full sm:w-auto justify-center px-4 py-2.5 rounded-xl bg-[#F1F5F9] text-[#475569] hover:bg-[#E2E8F0] hover:text-[#0F172A] text-xs font-medium transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={creating}
-                  className="px-6 py-2.5 rounded-xl bg-[#0284C7] hover:bg-[#0369a1] text-white font-semibold text-xs transition-all shadow-xs disabled:opacity-50 flex items-center gap-2 cursor-pointer"
+                  className="w-full sm:w-auto justify-center px-6 py-2.5 rounded-xl bg-[#0284C7] hover:bg-[#0369a1] text-white font-semibold text-xs transition-all shadow-xs disabled:opacity-50 flex items-center gap-2 cursor-pointer"
                 >
                   {creating && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   <span>Create Project Workspace</span>

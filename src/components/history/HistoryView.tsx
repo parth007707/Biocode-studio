@@ -25,7 +25,7 @@ import { generateAnalysisReportPdf, generateBatchSummaryReportPdf } from '../../
 
 interface HistoryViewProps {
   user: any;
-  onOpenAuth: () => void;
+  authReady?: boolean;
   initialAnalysisId?: string | null;
   onSelectAnalysis?: (id: string | null) => void;
   onOpenWorkbench?: (sequence: string, meta?: any, pipeline?: string, savedResults?: any) => void;
@@ -34,7 +34,7 @@ interface HistoryViewProps {
 
 export const HistoryView: React.FC<HistoryViewProps> = ({ 
   user, 
-  onOpenAuth,
+  authReady = true,
   initialAnalysisId = null,
   onSelectAnalysis,
   onOpenWorkbench,
@@ -54,12 +54,13 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   const PAGE_SIZE = 15;
 
   useEffect(() => {
+    if (!authReady) return;
     let isMounted = true;
     loadHistory(isMounted);
     return () => {
       isMounted = false;
     };
-  }, [user?.id]);
+  }, [user?.id, authReady]);
 
   // Synchronize when initialAnalysisId prop changes (e.g. via direct URL navigation)
   useEffect(() => {
@@ -89,11 +90,11 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         setIsRateLimited(rateLimit);
         setError(msg);
         
-        // Try fallback local analyses
+        // Try fallback visitor-scoped local analyses
         try {
-          const local = localStorage.getItem('biocode_analyses');
-          if (local) {
-            setAnalyses(JSON.parse(local));
+          const localAnalyses = await bioService.getLocalAnalysesCache(user?.id);
+          if (localAnalyses.length > 0) {
+            setAnalyses(localAnalyses);
           }
         } catch {}
       }
@@ -185,12 +186,12 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   const paginatedAnalyses = filteredAnalyses.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   return (
-    <div id="history-view-container" className="p-8 space-y-6 max-w-7xl mx-auto">
+    <div id="history-view-container" className="p-4 sm:p-6 md:p-8 space-y-6 max-w-7xl mx-auto">
       {/* Header & Database Architecture Status */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-[#0F172A] tracking-tight flex items-center gap-2.5">
-            <History className="w-5 h-5 text-[#0284C7]" />
+            <History className="w-5 h-5 text-[#0284C7] shrink-0" />
             <span>Analysis Audit History & Sequence Records</span>
           </h2>
           <p className="text-xs text-[#475569] mt-1">
@@ -198,7 +199,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <button
             onClick={handleExportSummaryPdf}
             disabled={isExportingSummary || filteredAnalyses.length === 0}
@@ -257,9 +258,9 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
 
       {/* Database Status Diagnostic Banner */}
       {!isSupabaseConfigured ? (
-        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex items-start sm:items-center gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5 sm:mt-0" />
             <div>
               <span className="font-bold">Supabase Environment Unconfigured:</span> Showing local offline storage fallback. Configure <code className="font-mono bg-amber-100 px-1 py-0.5 rounded border border-amber-200">VITE_SUPABASE_URL</code> & <code className="font-mono bg-amber-100 px-1 py-0.5 rounded border border-amber-200">VITE_SUPABASE_ANON_KEY</code>.
             </div>
@@ -286,12 +287,12 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
           </button>
         </div>
       ) : (
-        <div className="p-3.5 rounded-2xl bg-sky-50 border border-sky-200 text-xs text-[#0284C7] flex items-center justify-between font-mono">
-          <div className="flex items-center gap-2">
-            <Cloud className="w-4 h-4 text-[#0284C7]" />
+        <div className="p-3.5 rounded-2xl bg-sky-50 border border-sky-200 text-xs text-[#0284C7] flex flex-col sm:flex-row sm:items-center justify-between gap-2 font-mono">
+          <div className="flex items-start sm:items-center gap-2">
+            <Cloud className="w-4 h-4 text-[#0284C7] shrink-0 mt-0.5 sm:mt-0" />
             <span>Supabase Cloud Database: Connected (<code className="text-[#0369a1] font-semibold">sequence_records</code>, <code className="text-[#0369a1] font-semibold">analyses</code>, <code className="text-[#0369a1] font-semibold">projects</code> verified)</span>
           </div>
-          <span className="text-[10px] text-[#0284C7] bg-white px-2 py-0.5 rounded border border-sky-200 font-semibold shadow-2xs">
+          <span className="text-[10px] text-[#0284C7] bg-white px-2 py-0.5 rounded border border-sky-200 font-semibold shadow-2xs self-start sm:self-auto shrink-0">
             PostgREST Schema Synchronized
           </span>
         </div>
@@ -309,7 +310,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
             className="w-full bg-white border border-[#CBD5E1] rounded-xl pl-10 pr-4 py-2 text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#38BDF8] font-mono shadow-2xs"
           />
         </div>
-        <div className="flex items-center gap-3 text-xs text-[#64748B] font-mono">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-[#64748B] font-mono">
           <span>Total Records: <strong className="text-[#0F172A]">{analyses.length}</strong></span>
           <span>•</span>
           <span className="flex items-center gap-1">
@@ -331,7 +332,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
           <p className="text-xs font-mono text-[#64748B]">Fetching audit records from Supabase database...</p>
         </div>
       ) : filteredAnalyses.length === 0 ? (
-        <div className="p-16 text-center bg-white border border-[#E2E8F0] rounded-2xl space-y-3 shadow-xs">
+        <div className="p-8 sm:p-16 text-center bg-white border border-[#E2E8F0] rounded-2xl space-y-3 shadow-xs">
           <History className="w-10 h-10 text-[#94A3B8] mx-auto" />
           <h3 className="text-sm font-semibold text-[#0F172A]">No analyses found</h3>
           <p className="text-xs text-[#64748B] max-w-sm mx-auto">
@@ -341,7 +342,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
       ) : (
         <div className="bg-white border border-[#E2E8F0] rounded-2xl overflow-hidden shadow-xs">
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+            <table className="w-full min-w-[820px] text-left border-collapse">
               <thead>
                 <tr className="border-b border-[#E2E8F0] text-[11px] font-mono text-[#64748B] uppercase bg-[#F8FAFC]">
                   <th className="p-4">Analysis Pipeline & Scope</th>
@@ -485,7 +486,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
 
           {/* Pagination Controls */}
           {totalPages > 1 && (
-            <div className="p-4 bg-[#F8FAFC] border-t border-[#E2E8F0] flex items-center justify-between font-mono text-xs text-[#64748B]">
+            <div className="p-3.5 sm:p-4 bg-[#F8FAFC] border-t border-[#E2E8F0] flex flex-col sm:flex-row sm:items-center justify-between gap-3 font-mono text-xs text-[#64748B]">
               <div>
                 Showing <strong className="text-[#0F172A]">{(currentPage - 1) * PAGE_SIZE + 1}</strong> to{' '}
                 <strong className="text-[#0F172A]">
@@ -494,7 +495,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                 of <strong className="text-[#0F172A]">{filteredAnalyses.length}</strong> records
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   disabled={currentPage <= 1}

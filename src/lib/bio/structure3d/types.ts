@@ -34,11 +34,13 @@ export type RepresentationMode =
 
 export type ColorScheme = 
   | 'secondary_structure' 
+  | 'chain'
+  | 'residue'
+  | 'element'
   | 'hydrophobicity' 
   | 'plddt_bfactor' 
   | 'electrostatics' 
   | 'rainbow_spectrum' 
-  | 'element' 
   | 'mutation_delta';
 
 export interface AtomicCoordinate {
@@ -146,6 +148,20 @@ export interface StructureCoverageInfo {
   isPartial: boolean;
   unresolvedRegions: string[];
   chain: string;
+  sequenceIdentity?: number;
+  coverageLabel?: string;
+  targetToChainResSeq?: Record<number, number>;
+}
+
+export interface StructureCandidateSummary {
+  id: string;
+  source: 'RCSB PDB' | 'AlphaFold DB';
+  classification: 'Experimental' | 'Predicted';
+  method?: string;
+  resolution?: string;
+  confidenceScore?: number;
+  chainSpan?: string;
+  title?: string;
 }
 
 export interface ResolvedStructure3D {
@@ -175,6 +191,29 @@ export interface ResolvedStructure3D {
   ramachandranStats?: RamachandranStats;
   pLddtAvg?: number;
   structureType?: StructureStatusState;
+  classification?: 'Experimental' | 'Predicted' | 'Unavailable';
+  matchedChainId?: string;
+  sequenceIdentity?: number;
+  missingRegions?: string[];
+  parsedAtomCount?: number;
+  invalidAtomCount?: number;
+  parsedResiduesCount?: number;
+  structureFormat?: 'PDB' | 'mmCIF';
+  candidateStructures?: StructureCandidateSummary[];
+  targetProteinSequence?: string;
+  translatedFromNucleotide?: boolean;
+  nucleotideAccession?: string;
+  ncbiProteinAccession?: string;
+  uniprotAccession?: string;
+  modificationRelation?: {
+    hasOriginalComparison: boolean;
+    diffCount: number;
+    modeledDiffCount: number;
+    hasIndels: boolean;
+    note?: string;
+  };
+  predictionAvailable?: boolean;
+  predictionReason?: string;
   residueMapping?: ResidueMappingItem[];
   coverageInfo?: StructureCoverageInfo;
   sequenceId?: string;

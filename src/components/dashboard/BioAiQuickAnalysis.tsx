@@ -96,7 +96,7 @@ export const BioAiQuickAnalysis: React.FC<BioAiQuickAnalysisProps> = ({
 
   return (
     <div 
-      className="border border-[#F9A8D4] rounded-2xl p-5 sm:p-6 relative overflow-hidden shadow-[0_4px_25px_rgba(236,72,153,0.06)]"
+      className="border border-[#F9A8D4] rounded-2xl p-4 sm:p-6 relative overflow-hidden shadow-[0_4px_25px_rgba(236,72,153,0.06)]"
       style={{
         background: 'linear-gradient(135deg, #FDF2F8 0%, #FFF1F2 100%)'
       }}
@@ -126,9 +126,9 @@ export const BioAiQuickAnalysis: React.FC<BioAiQuickAnalysisProps> = ({
         </div>
 
         {/* Current Active Sequence Context Pill */}
-        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/90 border border-[#F9A8D4] text-xs font-mono shadow-2xs shrink-0">
+        <div className="flex items-center flex-wrap gap-1.5 px-3 py-1.5 rounded-xl bg-white/90 border border-[#F9A8D4] text-xs font-mono shadow-2xs sm:shrink-0 max-w-full">
           <span className="text-[#9D174D] font-bold">TARGET:</span>
-          <span className="text-[#0284C7] font-semibold">{accession}</span>
+          <span className="text-[#0284C7] font-semibold break-all">{accession}</span>
           <span className="text-[#F9A8D4]">•</span>
           <span className="text-[#475569]">{totalLength || sequence.length} {sequenceType.includes('Prot') ? 'aa' : 'bp'}</span>
         </div>
@@ -171,7 +171,7 @@ export const BioAiQuickAnalysis: React.FC<BioAiQuickAnalysisProps> = ({
           e.preventDefault();
           handleAsk();
         }}
-        className="relative flex items-center z-10"
+        className="relative flex flex-col sm:flex-row sm:items-center gap-2 z-10"
       >
         <input
           type="text"
@@ -179,13 +179,13 @@ export const BioAiQuickAnalysis: React.FC<BioAiQuickAnalysisProps> = ({
           onChange={(e) => setPrompt(e.target.value)}
           placeholder={`Ask BioAI about ${accession} (e.g., "What functional motifs or domains are present?")...`}
           disabled={isLoading}
-          className="w-full bg-white text-[#0F172A] placeholder-[#94A3B8] rounded-xl px-4 py-3 pr-32 border border-[#F9A8D4] focus:outline-none focus:border-[#EC4899] focus:ring-2 focus:ring-[#F9A8D4]/50 text-xs sm:text-sm font-mono transition-colors shadow-2xs"
+          className="w-full bg-white text-[#0F172A] placeholder-[#94A3B8] rounded-xl px-4 py-3 sm:pr-36 border border-[#F9A8D4] focus:outline-none focus:border-[#EC4899] focus:ring-2 focus:ring-[#F9A8D4]/50 text-xs sm:text-sm font-mono transition-colors shadow-2xs"
         />
-        <div className="absolute right-2 flex items-center gap-1.5">
+        <div className="sm:absolute sm:right-2 flex items-center justify-end gap-1.5">
           <button
             type="submit"
             disabled={!prompt.trim() || isLoading}
-            className="px-4 py-1.5 rounded-lg bg-[#EC4899] hover:bg-[#DB2777] text-white font-bold font-mono text-xs flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-xs"
+            className="w-full sm:w-auto justify-center px-4 py-2 sm:py-1.5 rounded-lg bg-[#EC4899] hover:bg-[#DB2777] text-white font-bold font-mono text-xs flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-xs"
           >
             {isLoading ? (
               <>
@@ -213,8 +213,8 @@ export const BioAiQuickAnalysis: React.FC<BioAiQuickAnalysisProps> = ({
       {/* Response Box */}
       {response && (
         <div className="mt-4 p-4 rounded-xl bg-white border border-[#F9A8D4] space-y-3 shadow-xs relative z-10">
-          <div className="flex items-center justify-between border-b border-[#FBCFE8] pb-2">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#FBCFE8] pb-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <Bot className="w-4 h-4 text-[#EC4899]" />
               <span className="text-xs font-bold text-[#0F172A] font-mono">
                 BIOAI SYNTHESIS
@@ -224,7 +224,7 @@ export const BioAiQuickAnalysis: React.FC<BioAiQuickAnalysisProps> = ({
               </span>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center flex-wrap gap-2">
               <button
                 type="button"
                 onClick={handleCopy}

@@ -91,7 +91,7 @@ export const QuickResearchActions: React.FC<QuickResearchActionsProps> = ({
           return (
             <div
               key={act.id}
-              className={`bg-white border rounded-2xl p-5 transition-all duration-200 flex flex-col justify-between group cursor-pointer hover:-translate-y-1 ${act.cardClass}`}
+              className={`bg-white border rounded-2xl p-4 sm:p-5 transition-all duration-200 flex flex-col justify-between group cursor-pointer hover:-translate-y-1 ${act.cardClass}`}
               onClick={act.onClick}
             >
               <div className="space-y-3.5">

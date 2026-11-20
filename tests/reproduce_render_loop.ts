@@ -67,7 +67,7 @@ async function test() {
   console.log('Testing ProjectsView');
   root.render(
     React.createElement(BioSequenceProvider, null,
-      React.createElement(ProjectsView, { user: { id: 'test_user' }, onOpenAuth: () => {} })
+      React.createElement(ProjectsView, { user: null })
     )
   );
   await new Promise(r => setTimeout(r, 1000));
@@ -83,7 +83,7 @@ async function test() {
   console.log('Testing HistoryView');
   root.render(
     React.createElement(BioSequenceProvider, null,
-      React.createElement(HistoryView, { user: { id: 'test_user' }, onOpenAuth: () => {} })
+      React.createElement(HistoryView, { user: null })
     )
   );
   await new Promise(r => setTimeout(r, 1000));

@@ -35,12 +35,14 @@ import { aiService } from '../../services/aiService';
 
 interface AIAssistantViewProps {
   user?: any;
+  authReady?: boolean;
   activeContext?: AiContextData | null;
   onSelectContextTab?: (tab: string, id?: string) => void;
 }
 
 export const AIAssistantView: React.FC<AIAssistantViewProps> = ({
   user,
+  authReady = true,
   activeContext,
   onSelectContextTab,
 }) => {
@@ -86,10 +88,11 @@ export const AIAssistantView: React.FC<AIAssistantViewProps> = ({
 
   // React to activeContext changes (e.g. when opened from sequence workbench or project detail)
   useEffect(() => {
+    if (!authReady) return;
     if (activeContext && activeContext.type !== 'dashboard') {
       handleCreateNewSession();
     }
-  }, [activeContext]);
+  }, [activeContext, authReady]);
 
   // Auto-scroll to bottom of messages
   const scrollToBottom = () => {
@@ -102,6 +105,7 @@ export const AIAssistantView: React.FC<AIAssistantViewProps> = ({
 
   // Load user's conversations on mount or user change
   useEffect(() => {
+    if (!authReady) return;
     const loadConversations = async () => {
       const convs = await aiService.getConversations(user?.id);
       setConversations(convs);
@@ -109,7 +113,7 @@ export const AIAssistantView: React.FC<AIAssistantViewProps> = ({
       if (convs.length > 0) {
         const latest = convs[0];
         setActiveConversation(latest);
-        const msgs = await aiService.getMessages(latest.id);
+        const msgs = await aiService.getMessages(latest.id, user?.id);
         setMessages(msgs);
       } else {
         await handleCreateNewSession();
@@ -117,7 +121,7 @@ export const AIAssistantView: React.FC<AIAssistantViewProps> = ({
     };
 
     loadConversations();
-  }, [user?.id]);
+  }, [user?.id, authReady]);
 
   // Handle creating a brand new session
   const handleCreateNewSession = async () => {
@@ -164,7 +168,7 @@ export const AIAssistantView: React.FC<AIAssistantViewProps> = ({
   const handleSelectConversation = async (conv: AiConversation) => {
     setActiveConversation(conv);
     setErrorMessage(null);
-    const msgs = await aiService.getMessages(conv.id);
+    const msgs = await aiService.getMessages(conv.id, user?.id);
     setMessages(msgs);
     setIsHistorySidebarOpen(false);
   };
@@ -172,7 +176,7 @@ export const AIAssistantView: React.FC<AIAssistantViewProps> = ({
   // Delete conversation
   const handleDeleteConversation = async (e: React.MouseEvent, convId: string) => {
     e.stopPropagation();
-    await aiService.deleteConversation(convId);
+    await aiService.deleteConversation(convId, user?.id);
     setConversations((prev) => prev.filter((c) => c.id !== convId));
     if (activeConversation?.id === convId) {
       const remaining = conversations.filter((c) => c.id !== convId);
@@ -509,9 +513,24 @@ How can I help you interpret these saved results?`;
   }
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] bg-[#F8FAFC] text-[#0F172A] overflow-hidden font-sans">
-      {/* Session History Sidebar (Collapsible) */}
-      <div className={`${isHistorySidebarOpen ? 'w-72 border-r border-[#E2E8F0]' : 'w-0'} transition-all duration-300 overflow-hidden bg-white flex flex-col shrink-0`}>
+    <div className="relative flex h-[calc(100dvh-4rem)] bg-[#F8FAFC] text-[#0F172A] overflow-hidden font-sans">
+      {/* Mobile Backdrop for Session History Drawer */}
+      {isHistorySidebarOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-slate-900/35 backdrop-blur-xs md:hidden"
+          onClick={() => setIsHistorySidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      {/* Session History Sidebar (Mobile Slide-Over Drawer / Desktop Inline Collapsible) */}
+      <div
+        className={`${
+          isHistorySidebarOpen
+            ? 'fixed inset-y-0 left-0 z-40 w-72 max-w-[85vw] shadow-xl md:static md:shadow-none md:z-auto border-r border-[#E2E8F0]'
+            : 'hidden md:flex md:w-0'
+        } transition-all duration-300 overflow-hidden bg-white flex flex-col shrink-0`}
+      >
         <div className="p-4 border-b border-[#E2E8F0] flex items-center justify-between">
           <h3 className="font-semibold text-xs text-[#0F172A] font-mono flex items-center gap-2">
             <History className="w-4 h-4 text-[#EC4899]" />
@@ -555,7 +574,7 @@ How can I help you interpret these saved results?`;
                 <button
                   onClick={(e) => handleDeleteConversation(e, conv.id)}
                   title="Delete Session"
-                  className="opacity-0 group-hover:opacity-100 text-[#94A3B8] hover:text-[#EF4444] p-1 rounded transition-opacity cursor-pointer"
+                  className="md:opacity-0 group-hover:opacity-100 text-[#94A3B8] hover:text-[#EF4444] p-1 rounded transition-opacity cursor-pointer"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
@@ -568,36 +587,36 @@ How can I help you interpret these saved results?`;
       {/* Main Workspace Area */}
       <div className="flex-1 flex flex-col min-w-0 h-full bg-[#F8FAFC]">
         {/* Top Header Bar */}
-        <div className="px-6 py-4 border-b border-[#E2E8F0] bg-white flex items-center justify-between shrink-0 shadow-2xs">
-          <div className="flex items-center gap-3">
+        <div className="px-3.5 sm:px-6 py-3 sm:py-4 border-b border-[#E2E8F0] bg-white flex flex-wrap items-center justify-between gap-2.5 shrink-0 shadow-2xs">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
             <button
               onClick={() => setIsHistorySidebarOpen(!isHistorySidebarOpen)}
-              className="p-2 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0] text-[#475569] hover:text-[#0F172A] transition-colors cursor-pointer"
+              className="p-2 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0] text-[#475569] hover:text-[#0F172A] transition-colors cursor-pointer shrink-0"
               title="Toggle History Sidebar"
             >
               <History className="w-4 h-4 text-[#EC4899]" />
             </button>
-            <div>
+            <div className="min-w-0">
               <h2 className="text-sm font-bold text-[#0F172A] tracking-tight flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-[#EC4899]" />
-                BioAI Scientific Assistant
+                <Sparkles className="w-4 h-4 text-[#EC4899] shrink-0" />
+                <span className="truncate">BioAI Scientific Assistant</span>
               </h2>
-              <p className="text-[11px] text-[#64748B] font-mono">
+              <p className="text-[11px] text-[#64748B] font-mono truncate">
                 Grounded Reasoning Engine • Powered by {formatModelDisplayName(lastModelUsed)}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={handleCreateNewSession}
-              className="px-3 py-1.5 rounded-lg bg-white border border-[#E2E8F0] text-[#475569] hover:text-[#DB2777] hover:border-[#F472B6]/40 text-xs font-mono transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+              className="px-2.5 sm:px-3 py-1.5 rounded-lg bg-white border border-[#E2E8F0] text-[#475569] hover:text-[#DB2777] hover:border-[#F472B6]/40 text-xs font-mono transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
             >
               <RotateCcw className="w-3.5 h-3.5" />
               <span>New Session</span>
             </button>
 
-            <span className="text-[11px] font-mono text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200 flex items-center gap-1.5 font-semibold">
+            <span className="hidden sm:flex text-[11px] font-mono text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200 items-center gap-1.5 font-semibold">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               Context Connected
             </span>
@@ -608,9 +627,9 @@ How can I help you interpret these saved results?`;
         <div className="bg-white border-b border-[#E2E8F0]">
           <div 
             onClick={() => setIsContextExpanded(!isContextExpanded)}
-            className="px-6 py-2.5 flex items-center justify-between cursor-pointer hover:bg-[#F8FAFC] transition-colors select-none"
+            className="px-3.5 sm:px-6 py-2.5 flex items-center justify-between gap-2 cursor-pointer hover:bg-[#F8FAFC] transition-colors select-none"
           >
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               <Database className="w-3.5 h-3.5 text-[#EC4899]" />
               <span className="text-xs font-bold font-mono text-[#DB2777] uppercase tracking-wider">AI CONTEXT</span>
               <span className="text-[11px] text-[#64748B] font-mono font-medium">
@@ -618,24 +637,24 @@ How can I help you interpret these saved results?`;
               </span>
             </div>
 
-            <div className="flex items-center gap-3">
-              <span className="text-[11px] text-[#64748B] font-mono">
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+              <span className="text-[11px] text-[#64748B] font-mono truncate">
                 {activeContext?.type === 'sequence' && `Accession: ${(activeContext as AiSequenceContext).accession}`}
                 {activeContext?.type === 'project' && `Project: ${(activeContext as AiProjectContext).projectName}`}
                 {activeContext?.type === 'history' && `History: ${(activeContext as AiHistoryContext).accession}`}
                 {(!activeContext || activeContext.type === 'dashboard') && 'General Dashboard Context'}
               </span>
               {isContextExpanded ? (
-                <ChevronUp className="w-3.5 h-3.5 text-[#64748B]" />
+                <ChevronUp className="w-3.5 h-3.5 text-[#64748B] shrink-0" />
               ) : (
-                <ChevronDown className="w-3.5 h-3.5 text-[#64748B]" />
+                <ChevronDown className="w-3.5 h-3.5 text-[#64748B] shrink-0" />
               )}
             </div>
           </div>
 
           {/* Context Summary Cards Body */}
           {isContextExpanded && (
-            <div className="px-6 py-3 border-t border-[#E2E8F0] bg-[#F8FAFC] text-xs font-mono grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div className="px-3.5 sm:px-6 py-3 border-t border-[#E2E8F0] bg-[#F8FAFC] text-xs font-mono grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 sm:gap-3">
               {(!activeContext || activeContext.type === 'dashboard') && (
                 <>
                   <div className="p-2.5 rounded-lg bg-white border border-[#E2E8F0] shadow-2xs">
@@ -739,13 +758,13 @@ How can I help you interpret these saved results?`;
         </div>
 
         {/* Chat Messages Log */}
-        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+        <div className="flex-1 overflow-y-auto px-3.5 sm:px-6 py-4 sm:py-6 space-y-5 sm:space-y-6">
           {messages.map((msg) => {
             const isUser = msg.sender === 'user';
             return (
               <div
                 key={msg.id}
-                className={`flex items-start gap-3.5 ${isUser ? 'flex-row-reverse' : ''}`}
+                className={`flex items-start gap-2.5 sm:gap-3.5 ${isUser ? 'flex-row-reverse' : ''}`}
               >
                 <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 border ${
                   isUser 
@@ -755,12 +774,12 @@ How can I help you interpret these saved results?`;
                   {isUser ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
                 </div>
 
-                <div className={`max-w-2xl rounded-2xl p-4 text-xs border ${
+                <div className={`max-w-[calc(100%-2.75rem)] sm:max-w-2xl rounded-2xl p-3 sm:p-4 text-xs border min-w-0 break-words ${
                   isUser
                     ? 'bg-white border-[#38BDF8]/40 text-[#0F172A] rounded-tr-xs shadow-2xs'
                     : 'bg-white border-[#E2E8F0] text-[#0F172A] rounded-tl-xs shadow-[0_4px_20px_rgba(15,23,42,0.04)]'
                 }`}>
-                  <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#E2E8F0] text-[10px] font-mono text-[#64748B]">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-2 mb-2 border-b border-[#E2E8F0] text-[10px] font-mono text-[#64748B]">
                     <span>{isUser ? 'You (Researcher)' : 'BioAI Copilot'} • {new Date(msg.created_at).toLocaleTimeString()}</span>
                     {!isUser && (
                       <button
@@ -829,7 +848,7 @@ How can I help you interpret these saved results?`;
         </div>
 
         {/* Input Form Area */}
-        <div className="p-4 border-t border-[#E2E8F0] bg-white shadow-xs">
+        <div className="p-3 sm:p-4 border-t border-[#E2E8F0] bg-white shadow-xs">
           {/* Suggested Contextual Prompt Chips */}
           {renderContextPromptChips()}
 
@@ -848,20 +867,20 @@ How can I help you interpret these saved results?`;
                   ? `Ask BioAI about project "${(activeContext as AiProjectContext).projectName}"...`
                   : "Ask BioAI about molecular weight, pI, hydropathy, mutations, or scientific interpretations..."
               }
-              className="w-full bg-[#F8FAFC] focus:bg-white border border-[#CBD5E1] rounded-xl pl-4 pr-28 py-3.5 text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#EC4899] focus:ring-1 focus:ring-[#EC4899]/30 font-mono disabled:opacity-50 shadow-2xs transition-all"
+              className="w-full bg-[#F8FAFC] focus:bg-white border border-[#CBD5E1] rounded-xl pl-3.5 sm:pl-4 pr-24 sm:pr-28 py-3 sm:py-3.5 text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#EC4899] focus:ring-1 focus:ring-[#EC4899]/30 font-mono disabled:opacity-50 shadow-2xs transition-all"
             />
 
             <button
               type="submit"
               disabled={isGenerating || !inputVal.trim()}
-              className="absolute right-2 top-1/2 -translate-y-1/2 px-4 py-2 rounded-lg bg-[#EC4899] hover:bg-[#DB2777] text-white font-bold text-xs disabled:opacity-40 transition-all flex items-center gap-1.5 shadow-xs font-mono cursor-pointer"
+              className="absolute right-1.5 sm:right-2 top-1/2 -translate-y-1/2 px-3 sm:px-4 py-2 rounded-lg bg-[#EC4899] hover:bg-[#DB2777] text-white font-bold text-xs disabled:opacity-40 transition-all flex items-center gap-1.5 shadow-xs font-mono cursor-pointer"
             >
               <span>{isGenerating ? "Analyzing..." : "Send"}</span>
               <Send className="w-3.5 h-3.5" />
             </button>
           </form>
 
-          <div className="flex items-center justify-between mt-2 text-[10px] text-[#64748B] font-mono px-1">
+          <div className="flex flex-wrap items-center justify-between gap-1.5 mt-2 text-[10px] text-[#64748B] font-mono px-1">
             <span>Grounding: Strict BioCode Studio Context Validation</span>
             <div className="flex items-center gap-2">
               <span className="text-emerald-700 font-medium">Model: {lastModelUsed}</span>

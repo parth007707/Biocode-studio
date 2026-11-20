@@ -1,8 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import * as THREE from 'three';
 import { 
-  ZoomIn, ZoomOut, Maximize2, Minimize2, Play, Pause, 
-  RefreshCw, Info, Layers, MoveHorizontal, CheckCircle2, Compass
+  ZoomIn, ZoomOut, Maximize2, Minimize2,
+  Info, CheckCircle2, Compass
 } from 'lucide-react';
 import { RNASecondaryStructureResult } from '../../../lib/bio/rnaAnalysis';
 
@@ -36,7 +35,6 @@ export const RNAViewer: React.FC<RNAViewerProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const threeCanvasRef = useRef<HTMLDivElement>(null);
 
   const cleanSeq = useMemo(() => {
     return sequence.toUpperCase().replace(/[^ACGUN]/g, '');
@@ -45,7 +43,6 @@ export const RNAViewer: React.FC<RNAViewerProps> = ({
   const seqLength = cleanSeq.length;
   const effectiveTotalLength = totalLength || (fullSequence ? fullSequence.length : seqLength);
 
-  const [viewMode, setViewMode] = useState<'linear_schematic' | '3d_fold'>('linear_schematic');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [zoomLevel, setZoomLevel] = useState<number>(1);
   const [hasRendered, setHasRendered] = useState<boolean>(() => seqLength > 0);
@@ -54,14 +51,6 @@ export const RNAViewer: React.FC<RNAViewerProps> = ({
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
 
-  // 3D Three.js state
-  const [autoRotate, setAutoRotate] = useState(true);
-  const sceneRef = useRef<THREE.Scene | null>(null);
-  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
-  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  const groupRef = useRef<THREE.Group | null>(null);
-  const animFrameIdRef = useRef<number | null>(null);
-
   const [scrollLeft, setScrollLeft] = useState<number>(0);
   const [containerWidth, setContainerWidth] = useState<number>(800);
 
@@ -69,7 +58,7 @@ export const RNAViewer: React.FC<RNAViewerProps> = ({
     const updateDimensions = () => {
       if (containerRef.current) {
         const w = containerRef.current.clientWidth;
-        if (w > 0) setContainerWidth(w);
+        if (w > 0) setContainerWidth((prev) => (prev === w ? prev : w));
       }
     };
     updateDimensions();
@@ -110,178 +99,28 @@ export const RNAViewer: React.FC<RNAViewerProps> = ({
     return map;
   }, [rnaAnalysis, seqLength]);
 
-  // Three.js 3D Fold
-  useEffect(() => {
-    if (viewMode !== '3d_fold') {
-      if (animFrameIdRef.current) {
-        cancelAnimationFrame(animFrameIdRef.current);
-        animFrameIdRef.current = null;
-      }
-      if (rendererRef.current) {
-        rendererRef.current.dispose();
-        rendererRef.current = null;
-      }
-      return;
-    }
-
-    const container = threeCanvasRef.current;
-    if (!container || seqLength === 0) return;
-
-    const width = container.clientWidth || containerWidth || 600;
-    const height = container.clientHeight || 460;
-
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xf0fdfa);
-    sceneRef.current = scene;
-
-    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
-    const targetZ = Math.max(28, Math.min(seqLength, 100) * 0.65 + 15);
-    camera.position.set(0, 0, targetZ);
-    cameraRef.current = camera;
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
-    renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.shadowMap.enabled = true;
-    rendererRef.current = renderer;
-
-    while (container.firstChild) {
-      container.removeChild(container.firstChild);
-    }
-    container.appendChild(renderer.domElement);
-
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
-    scene.add(ambientLight);
-
-    const dirLight1 = new THREE.DirectionalLight(0x38bdf8, 1.2);
-    dirLight1.position.set(20, 30, 25);
-    scene.add(dirLight1);
-
-    const dirLight2 = new THREE.DirectionalLight(0xa855f7, 0.9);
-    dirLight2.position.set(-20, -25, -20);
-    scene.add(dirLight2);
-
-    const rootGroup = new THREE.Group();
-    groupRef.current = rootGroup;
-    scene.add(rootGroup);
-
-    const n = Math.min(seqLength, 100);
-    const points: THREE.Vector3[] = [];
-    const sphereGeo = new THREE.SphereGeometry(0.55, 14, 14);
-
-    const stemSpacing = 1.4;
-    const stemWidth = 3.6;
-
-    for (let i = 0; i < n; i++) {
-      let x = 0, y = 0, z = 0;
-      if (pairMap.has(i)) {
-        const paired = pairMap.get(i)!;
-        const stemIndex = Math.min(i, paired.to);
-        const isLeft = i < paired.to;
-        y = (stemIndex - n / 4) * stemSpacing;
-        x = isLeft ? -stemWidth / 2 : stemWidth / 2;
-        z = Math.sin(stemIndex * 0.4) * 2.2;
-      } else {
-        const angle = (i / n) * Math.PI * 3.5;
-        const radius = 5.5 + Math.sin(i * 0.3) * 1.5;
-        x = Math.cos(angle) * radius;
-        y = (i - n / 2) * 1.2;
-        z = Math.sin(angle) * radius;
-      }
-
-      const p = new THREE.Vector3(x, y, z);
-      points.push(p);
-
-      const base = cleanSeq[i];
-      const baseColor = RNA_BASE_COLORS[base]?.hex || 0x64748b;
-      const beadMat = new THREE.MeshStandardMaterial({ color: baseColor, roughness: 0.3, metalness: 0.2 });
-      const bead = new THREE.Mesh(sphereGeo, beadMat);
-      bead.position.copy(p);
-      rootGroup.add(bead);
-    }
-
-    if (points.length > 1) {
-      const curve = new THREE.CatmullRomCurve3(points);
-      const tubeGeo = new THREE.TubeGeometry(curve, n * 4, 0.22, 8, false);
-      const tubeMat = new THREE.MeshStandardMaterial({ color: 0x06b6d4, roughness: 0.3, metalness: 0.3 });
-      rootGroup.add(new THREE.Mesh(tubeGeo, tubeMat));
-    }
-
-    let isDragging = false;
-    let prevMousePos = { x: 0, y: 0 };
-
-    const onMouseDown = (e: MouseEvent) => { isDragging = true; prevMousePos = { x: e.clientX, y: e.clientY }; };
-    const onMouseMove = (e: MouseEvent) => {
-      if (!isDragging || !rootGroup) return;
-      rootGroup.rotation.y += (e.clientX - prevMousePos.x) * 0.01;
-      rootGroup.rotation.x += (e.clientY - prevMousePos.y) * 0.01;
-      prevMousePos = { x: e.clientX, y: e.clientY };
-    };
-    const onMouseUp = () => { isDragging = false; };
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      if (camera) camera.position.z = THREE.MathUtils.clamp(camera.position.z + e.deltaY * 0.05, 10, 160);
-    };
-
-    const domElem = renderer.domElement;
-    domElem.addEventListener('mousedown', onMouseDown);
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
-    domElem.addEventListener('wheel', onWheel, { passive: false });
-
-    const animate = () => {
-      animFrameIdRef.current = requestAnimationFrame(animate);
-      if (autoRotate && rootGroup && !isDragging) {
-        rootGroup.rotation.y += 0.007;
-      }
-      renderer.render(scene, camera);
-    };
-    animate();
-
-    const resizeObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const { width: w, height: h } = entry.contentRect;
-        if (w > 0 && h > 0 && renderer && camera) {
-          camera.aspect = w / h;
-          camera.updateProjectionMatrix();
-          renderer.setSize(w, h, true);
-        }
-      }
-    });
-    resizeObserver.observe(container);
-
-    return () => {
-      if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
-      domElem.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-      domElem.removeEventListener('wheel', onWheel);
-      resizeObserver.disconnect();
-      renderer.dispose();
-      while (container.firstChild) container.removeChild(container.firstChild);
-    };
-  }, [viewMode, cleanSeq, seqLength, autoRotate, pairMap]);
+  const handleZoom = (direction: 'in' | 'out' | 'fit') => {
+    if (direction === 'in') setZoomLevel(prev => Math.min(2.5, prev + 0.25));
+    else if (direction === 'out') setZoomLevel(prev => Math.max(0.5, prev - 0.25));
+    else setZoomLevel(1);
+  };
 
   return (
     <div
       ref={containerRef}
-      style={{ minHeight: '480px' }}
       className={`relative w-full rounded-2xl overflow-hidden border border-[#A7F3D0] bg-[#F0FDF4] flex flex-col shadow-xs ${
-        isFullscreen ? 'fixed inset-0 z-50 rounded-none h-screen min-h-screen' : 'h-[520px]'
+        isFullscreen ? 'fixed inset-0 z-50 rounded-none h-screen min-h-screen' : 'min-h-[300px] sm:min-h-[420px] lg:min-h-[480px] h-[340px] sm:h-[440px] lg:h-[520px]'
       } ${className}`}
     >
       {/* Top Header */}
-      <div className="bg-white/95 backdrop-blur-md border-b border-[#A7F3D0] px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5 z-20 font-mono text-xs shadow-2xs">
+      <div className="bg-white/95 backdrop-blur-md border-b border-[#A7F3D0] px-3 sm:px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5 z-20 font-mono text-xs shadow-2xs">
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center gap-1.5 bg-[#DCFCE7] text-[#059669] px-2.5 py-1 rounded-lg border border-[#A7F3D0] font-semibold text-[11px]">
             <Compass className="w-3.5 h-3.5 text-[#059669]" />
-            <span>{viewMode === 'linear_schematic' ? 'RNA Secondary Structure Schematic' : '3D Folded RNA Representation'}</span>
+            <span>RNA Linear Sequence &amp; Pairing Schematic</span>
           </div>
 
           <span className="text-[#CBD5E1]">|</span>
-          <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-sans font-medium">
-            Idealized RNA Schematic (Non-Experimental)
-          </span>
 
           {hasRendered && renderedCount > 0 ? (
             <span className="flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded text-[11px] font-bold">
@@ -294,26 +133,33 @@ export const RNAViewer: React.FC<RNAViewerProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5 flex-wrap">
-          <div className="flex items-center bg-[#F1F5F9] border border-[#CBD5E1] rounded-lg p-0.5 text-[11px]">
+          <div className="flex items-center gap-1 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg p-0.5">
             <button
               type="button"
-              onClick={() => setViewMode('linear_schematic')}
-              className={`px-2.5 py-1 rounded-md transition-all cursor-pointer font-sans font-semibold flex items-center gap-1 ${
-                viewMode === 'linear_schematic' ? 'bg-emerald-600 text-white shadow-2xs' : 'text-slate-600 hover:text-[#0F172A]'
-              }`}
+              onClick={() => handleZoom('in')}
+              className="p-1 rounded text-slate-600 hover:text-[#0F172A] hover:bg-slate-100 transition-colors cursor-pointer"
+              title="Zoom In"
             >
-              <MoveHorizontal className="w-3 h-3" />
-              <span>2D Linear</span>
+              <ZoomIn className="w-3.5 h-3.5" />
+            </button>
+            <span className="text-[10px] text-slate-500 px-1 font-mono min-w-[32px] text-center">
+              {Math.round(zoomLevel * 100)}%
+            </span>
+            <button
+              type="button"
+              onClick={() => handleZoom('out')}
+              className="p-1 rounded text-slate-600 hover:text-[#0F172A] hover:bg-slate-100 transition-colors cursor-pointer"
+              title="Zoom Out"
+            >
+              <ZoomOut className="w-3.5 h-3.5" />
             </button>
             <button
               type="button"
-              onClick={() => setViewMode('3d_fold')}
-              className={`px-2.5 py-1 rounded-md transition-all cursor-pointer font-sans font-semibold flex items-center gap-1 ${
-                viewMode === '3d_fold' ? 'bg-teal-600 text-white shadow-2xs' : 'text-slate-600 hover:text-[#0F172A]'
-              }`}
+              onClick={() => handleZoom('fit')}
+              className="px-1.5 py-0.5 rounded text-[10px] text-slate-600 hover:text-[#0F172A] hover:bg-slate-100 transition-colors cursor-pointer font-sans"
+              title="Reset Zoom to 100%"
             >
-              <Layers className="w-3 h-3" />
-              <span>3D Fold</span>
+              1x
             </button>
           </div>
 
@@ -334,7 +180,7 @@ export const RNAViewer: React.FC<RNAViewerProps> = ({
             <Info className="w-8 h-8 text-emerald-500 mb-2" />
             <p className="font-semibold text-slate-800">No RNA Sequence Available</p>
           </div>
-        ) : viewMode === 'linear_schematic' ? (
+        ) : (
           <div
             ref={scrollContainerRef}
             onScroll={(e) => setScrollLeft(e.currentTarget.scrollLeft)}
@@ -455,7 +301,7 @@ export const RNAViewer: React.FC<RNAViewerProps> = ({
                 <div
                   style={{
                     position: 'absolute',
-                    left: `${Math.min(containerWidth - 220, Math.max(20, tooltipPos.x + 15))}px`,
+                    left: `${Math.max(8, Math.min(containerWidth - 220, tooltipPos.x + 15))}px`,
                     top: `${Math.min(TRACK_HEIGHT - 100, Math.max(40, tooltipPos.y - 40))}px`
                   }}
                   className="bg-white/95 backdrop-blur-md border border-[#A7F3D0] rounded-xl p-3 shadow-lg pointer-events-none z-30 font-mono text-xs text-[#0F172A] w-52 space-y-1"
@@ -478,15 +324,11 @@ export const RNAViewer: React.FC<RNAViewerProps> = ({
               )}
             </div>
           </div>
-        ) : (
-          <div className="relative flex-1 w-full h-full">
-            <div ref={threeCanvasRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
-          </div>
         )}
       </div>
 
       {/* Legend */}
-      <div className="bg-white/95 backdrop-blur-md border-t border-[#A7F3D0] px-4 py-2 flex flex-wrap items-center justify-between gap-3 text-xs font-mono z-20 shadow-2xs">
+      <div className="bg-white/95 backdrop-blur-md border-t border-[#A7F3D0] px-3 sm:px-4 py-2 flex flex-wrap items-center justify-between gap-2 sm:gap-3 text-xs font-mono z-20 shadow-2xs">
         <div className="flex items-center gap-3 flex-wrap text-[11px]">
           <span className="text-slate-500 font-semibold">Ribonucleotides:</span>
           <span className="flex items-center gap-1 text-[#DC2626] font-bold"><span className="w-2.5 h-2.5 rounded-sm bg-[#EF4444] inline-block" /> A</span>

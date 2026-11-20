@@ -24,7 +24,8 @@ export const AbstractBiologicalNetwork3D: React.FC<AbstractBiologicalNetwork3DPr
     targetY: 0
   });
 
-  const seqLength = currentTarget?.totalLength || currentTarget?.sequence?.length || 381;
+  const seqLength = currentTarget?.totalLength || currentTarget?.sequence?.length || 0;
+  const seqUnit = currentTarget?.sequenceType?.toLowerCase().includes('prot') ? 'aa' : 'bp';
 
   useEffect(() => {
     const container = mountRef.current;
@@ -38,18 +39,30 @@ export const AbstractBiologicalNetwork3D: React.FC<AbstractBiologicalNetwork3DPr
     const width = container.clientWidth || 400;
     const height = container.clientHeight || 320;
 
+    let isSoftwareGl = false;
+    try {
+      const probeCanvas = document.createElement('canvas');
+      const gl2 = probeCanvas.getContext('webgl2');
+      if (gl2) {
+        const dbg = gl2.getExtension('WEBGL_debug_renderer_info');
+        const rStr = dbg ? String(gl2.getParameter(dbg.UNMASKED_RENDERER_WEBGL) || '') : '';
+        isSoftwareGl = /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(rStr);
+        gl2.getExtension('WEBGL_lose_context')?.loseContext();
+      }
+    } catch {}
+
     try {
       scene = new THREE.Scene();
       camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 100);
       camera.position.set(0, 0, 11.5);
 
       renderer = new THREE.WebGLRenderer({
-        antialias: true,
+        antialias: !isSoftwareGl,
         alpha: true,
         powerPreference: 'high-performance'
       });
       renderer.setSize(width, height);
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 2));
       renderer.setClearColor(0x000000, 0); // transparent background
 
       // Clear container and append canvas
@@ -241,14 +254,25 @@ export const AbstractBiologicalNetwork3D: React.FC<AbstractBiologicalNetwork3DPr
       // ----------------------------------------------------------------------
       // Mouse Interaction Handler
       // ----------------------------------------------------------------------
-      const handleMouseMove = (e: MouseEvent) => {
+      const updatePointerTarget = (clientXPos: number, clientYPos: number) => {
         const rect = container.getBoundingClientRect();
-        const clientX = e.clientX - rect.left;
-        const clientY = e.clientY - rect.top;
+        if (!rect.width || !rect.height) return;
+        const clientX = clientXPos - rect.left;
+        const clientY = clientYPos - rect.top;
         const normX = (clientX / rect.width) * 2 - 1;
         const normY = -(clientY / rect.height) * 2 + 1;
         mouseRef.current.targetX = normX * 0.35;
         mouseRef.current.targetY = normY * 0.25;
+      };
+
+      const handleMouseMove = (e: MouseEvent) => {
+        updatePointerTarget(e.clientX, e.clientY);
+      };
+
+      const handleTouchMove = (e: TouchEvent) => {
+        if (e.touches.length === 1) {
+          updatePointerTarget(e.touches[0].clientX, e.touches[0].clientY);
+        }
       };
 
       const handleMouseLeave = () => {
@@ -258,13 +282,20 @@ export const AbstractBiologicalNetwork3D: React.FC<AbstractBiologicalNetwork3DPr
 
       container.addEventListener('mousemove', handleMouseMove);
       container.addEventListener('mouseleave', handleMouseLeave);
+      container.addEventListener('touchmove', handleTouchMove, { passive: true });
+      container.addEventListener('touchend', handleMouseLeave, { passive: true });
 
       // ----------------------------------------------------------------------
       // Render Loop with Slow Elegant Motion
       // ----------------------------------------------------------------------
       const timer = new Timer();
+      let lastRenderMs = 0;
 
-      const animate = () => {
+      const animate = (now: number = 0) => {
+        animId = requestAnimationFrame(animate);
+        if (isSoftwareGl && now - lastRenderMs < 90) return;
+        lastRenderMs = now;
+
         timer.update();
         const elapsedTime = timer.getElapsed();
 
@@ -294,20 +325,23 @@ export const AbstractBiologicalNetwork3D: React.FC<AbstractBiologicalNetwork3DPr
         particles.rotation.x = elapsedTime * 0.03;
 
         renderer.render(scene, camera);
-        animId = requestAnimationFrame(animate);
       };
 
-      animate();
+      animate(performance.now());
 
-      // Resize observer
+      // Resize observer with dimension diff guard
+      let lastWidth = width;
+      let lastHeight = height;
       let resizeRafId: number | null = null;
       const resizeObserver = new ResizeObserver((entries) => {
         if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
         resizeRafId = requestAnimationFrame(() => {
           for (let entry of entries) {
-            const w = entry.contentRect.width;
-            const h = entry.contentRect.height;
-            if (w > 0 && h > 0) {
+            const w = Math.round(entry.contentRect.width);
+            const h = Math.round(entry.contentRect.height);
+            if (w > 0 && h > 0 && (w !== lastWidth || h !== lastHeight)) {
+              lastWidth = w;
+              lastHeight = h;
               camera.aspect = w / h;
               camera.updateProjectionMatrix();
               renderer.setSize(w, h);
@@ -322,6 +356,8 @@ export const AbstractBiologicalNetwork3D: React.FC<AbstractBiologicalNetwork3DPr
         if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
         container.removeEventListener('mousemove', handleMouseMove);
         container.removeEventListener('mouseleave', handleMouseLeave);
+        container.removeEventListener('touchmove', handleTouchMove);
+        container.removeEventListener('touchend', handleMouseLeave);
         resizeObserver.disconnect();
         if (renderer.domElement && renderer.domElement.parentNode) {
           renderer.domElement.parentNode.removeChild(renderer.domElement);
@@ -335,7 +371,7 @@ export const AbstractBiologicalNetwork3D: React.FC<AbstractBiologicalNetwork3DPr
   }, []);
 
   return (
-    <div className={`relative w-full h-full min-h-[300px] flex items-center justify-center select-none ${className}`}>
+    <div className={`relative w-full h-full min-h-[220px] sm:min-h-[300px] flex items-center justify-center select-none ${className}`}>
       {/* 3D Canvas Mount Point */}
       <div 
         ref={mountRef} 
@@ -359,44 +395,44 @@ export const AbstractBiologicalNetwork3D: React.FC<AbstractBiologicalNetwork3DPr
 
       {/* 1. Top-Left: Sequence Metric */}
       <div className="absolute top-2 left-2 sm:top-3 sm:left-3 z-20 pointer-events-none transition-transform duration-300 hover:scale-105">
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/95 backdrop-blur-md border border-sky-200/90 shadow-[0_4px_14px_rgba(14,165,233,0.12)]">
+        <div className="flex items-center gap-1.5 sm:gap-2 px-2 py-1 sm:px-3 sm:py-1.5 rounded-xl bg-white/95 backdrop-blur-md border border-sky-200/90 shadow-[0_4px_14px_rgba(14,165,233,0.12)]">
           <span className="w-2 h-2 rounded-full bg-sky-500 animate-pulse shadow-[0_0_6px_#0ea5e9]" />
           <div className="font-mono text-left">
-            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">SEQUENCE</span>
-            <span className="text-xs font-[800] text-slate-900 tracking-tight">{seqLength} aa</span>
+            <span className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase tracking-wider block">SEQUENCE</span>
+            <span className="text-[11px] sm:text-xs font-[800] text-slate-900 tracking-tight">{seqLength > 0 ? `${seqLength} ${seqUnit}` : '0 loaded'}</span>
           </div>
         </div>
       </div>
 
       {/* 2. Top-Right: Structure 3D Badge */}
       <div className="absolute top-2 right-2 sm:top-3 sm:right-3 z-20 pointer-events-none transition-transform duration-300 hover:scale-105">
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/95 backdrop-blur-md border border-purple-200/90 shadow-[0_4px_14px_rgba(139,92,246,0.12)]">
+        <div className="flex items-center gap-1.5 sm:gap-2 px-2 py-1 sm:px-3 sm:py-1.5 rounded-xl bg-white/95 backdrop-blur-md border border-purple-200/90 shadow-[0_4px_14px_rgba(139,92,246,0.12)]">
           <Box className="w-3.5 h-3.5 text-purple-600" />
           <div className="font-mono text-left">
-            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">STRUCTURE</span>
-            <span className="text-xs font-[800] text-purple-700 tracking-tight">3D Interactive</span>
+            <span className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase tracking-wider block">STRUCTURE</span>
+            <span className="text-[11px] sm:text-xs font-[800] text-purple-700 tracking-tight">3D Interactive</span>
           </div>
         </div>
       </div>
 
       {/* 3. Bottom-Left: BioAI Ready Badge */}
       <div className="absolute bottom-2 left-2 sm:bottom-3 sm:left-3 z-20 pointer-events-none transition-transform duration-300 hover:scale-105">
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/95 backdrop-blur-md border border-pink-200/90 shadow-[0_4px_14px_rgba(236,72,153,0.12)]">
+        <div className="flex items-center gap-1.5 sm:gap-2 px-2 py-1 sm:px-3 sm:py-1.5 rounded-xl bg-white/95 backdrop-blur-md border border-pink-200/90 shadow-[0_4px_14px_rgba(236,72,153,0.12)]">
           <Sparkles className="w-3.5 h-3.5 text-pink-600" />
           <div className="font-mono text-left">
-            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">BIOAI</span>
-            <span className="text-xs font-[800] text-pink-700 tracking-tight">READY</span>
+            <span className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase tracking-wider block">BIOAI</span>
+            <span className="text-[11px] sm:text-xs font-[800] text-pink-700 tracking-tight">READY</span>
           </div>
         </div>
       </div>
 
       {/* 4. Bottom-Right: Analysis 100% Badge */}
       <div className="absolute bottom-2 right-2 sm:bottom-3 sm:right-3 z-20 pointer-events-none transition-transform duration-300 hover:scale-105">
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/95 backdrop-blur-md border border-emerald-200/90 shadow-[0_4px_14px_rgba(34,197,94,0.12)]">
+        <div className="flex items-center gap-1.5 sm:gap-2 px-2 py-1 sm:px-3 sm:py-1.5 rounded-xl bg-white/95 backdrop-blur-md border border-emerald-200/90 shadow-[0_4px_14px_rgba(34,197,94,0.12)]">
           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
           <div className="font-mono text-left">
-            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">ANALYSIS</span>
-            <span className="text-xs font-[800] text-emerald-700 tracking-tight">100% Verified</span>
+            <span className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase tracking-wider block">ANALYSIS</span>
+            <span className="text-[11px] sm:text-xs font-[800] text-emerald-700 tracking-tight">100% Verified</span>
           </div>
         </div>
       </div>

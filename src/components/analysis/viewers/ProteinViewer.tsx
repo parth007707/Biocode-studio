@@ -79,7 +79,7 @@ export const ProteinViewer: React.FC<ProteinViewerProps> = ({
     const updateDimensions = () => {
       if (containerRef.current) {
         const w = containerRef.current.clientWidth;
-        if (w > 0) setContainerWidth(w);
+        if (w > 0) setContainerWidth((prev) => (prev === w ? prev : w));
       }
     };
     updateDimensions();
@@ -121,13 +121,12 @@ export const ProteinViewer: React.FC<ProteinViewerProps> = ({
   return (
     <div
       ref={containerRef}
-      style={{ minHeight: '480px' }}
       className={`relative w-full rounded-2xl overflow-hidden border border-[#DDD6FE] bg-[#FAF5FF] flex flex-col shadow-xs ${
-        isFullscreen ? 'fixed inset-0 z-50 rounded-none h-screen min-h-screen' : 'h-[520px]'
+        isFullscreen ? 'fixed inset-0 z-50 rounded-none h-screen min-h-screen' : 'min-h-[300px] sm:min-h-[420px] lg:min-h-[480px] h-[340px] sm:h-[440px] lg:h-[520px]'
       } ${className}`}
     >
       {/* Header */}
-      <div className="bg-white/95 backdrop-blur-md border-b border-[#DDD6FE] px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5 z-20 font-mono text-xs shadow-2xs">
+      <div className="bg-white/95 backdrop-blur-md border-b border-[#DDD6FE] px-3 sm:px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5 z-20 font-mono text-xs shadow-2xs">
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center gap-1.5 bg-[#EDE9FE] text-[#7C3AED] px-2.5 py-1 rounded-lg border border-[#DDD6FE] font-semibold text-[11px]">
             <Compass className="w-3.5 h-3.5 text-[#7C3AED]" />
@@ -332,7 +331,7 @@ export const ProteinViewer: React.FC<ProteinViewerProps> = ({
                 <div
                   style={{
                     position: 'absolute',
-                    left: `${Math.min(containerWidth - 220, Math.max(20, tooltipPos.x + 15))}px`,
+                    left: `${Math.max(8, Math.min(containerWidth - 220, tooltipPos.x + 15))}px`,
                     top: `${Math.min(TRACK_HEIGHT - 120, Math.max(40, tooltipPos.y - 40))}px`
                   }}
                   className="bg-white/95 backdrop-blur-md border border-[#DDD6FE] rounded-xl p-3 shadow-lg pointer-events-none z-30 font-mono text-xs text-[#0F172A] w-52 space-y-1"
@@ -363,7 +362,7 @@ export const ProteinViewer: React.FC<ProteinViewerProps> = ({
       </div>
 
       {/* Legend & 3D Structure Callout */}
-      <div className="bg-white/95 backdrop-blur-md border-t border-[#DDD6FE] px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs font-mono z-20 shadow-2xs">
+      <div className="bg-white/95 backdrop-blur-md border-t border-[#DDD6FE] px-3 sm:px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 sm:gap-3 text-xs font-mono z-20 shadow-2xs">
         <div className="flex items-center gap-3 flex-wrap text-[11px]">
           <span className="text-slate-500 font-semibold">Properties:</span>
           <span className="flex items-center gap-1 text-[#EA580C] font-bold"><span className="w-2.5 h-2.5 rounded-sm bg-[#F97316] inline-block" /> Hydrophobic</span>

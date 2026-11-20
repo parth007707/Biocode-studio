@@ -14,8 +14,7 @@ export const SubtleScientificVisual: React.FC<SubtleScientificVisualProps> = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [pulseCount, setPulseCount] = useState<number>(0);
 
-  // Clean biological sequence slice for visualization
-  const cleanSeq = currentTarget.sequence?.toUpperCase().replace(/[^A-Z]/g, '') || 'MEEPQSDPSVEPPLSQETFSDLWKLLPENNVLS';
+  const cleanSeq = currentTarget.sequence?.toUpperCase().replace(/[^A-Z]/g, '') || '';
   const displaySlice = cleanSeq.slice(0, 24);
 
   useEffect(() => {
@@ -122,11 +121,11 @@ export const SubtleScientificVisual: React.FC<SubtleScientificVisualProps> = ({
           </span>
           <div>
             <div className="text-xs font-[800] font-mono text-slate-900 tracking-tight flex items-center gap-1.5">
-              <span>{currentTarget.accession}</span>
+              <span>{currentTarget.accession || 'No Active Target'}</span>
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
             </div>
             <div className="text-[10px] font-mono text-slate-500 font-medium">
-              {currentTarget.organism || 'Homo sapiens'} · {currentTarget.sequenceType || 'Protein'}
+              {currentTarget.organism || 'Ready'} · {currentTarget.sequenceType || 'Sequence'}
             </div>
           </div>
         </div>

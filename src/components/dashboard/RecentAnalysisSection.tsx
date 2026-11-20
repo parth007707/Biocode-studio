@@ -113,7 +113,7 @@ export const RecentAnalysisSection: React.FC<RecentAnalysisSectionProps> = ({
             </thead>
             <tbody className="divide-y divide-[#1E3A5F] bg-[#0B1B31] text-[#F8FAFC]">
               {records.map((rec) => {
-                const accession = rec.sequence_record?.accession || 'NP_000537';
+                const accession = rec.sequence_record?.accession || rec.input_source || 'Custom Sequence';
                 const seqType = rec.sequence_type || rec.sequence_record?.sequence_type || 'Protein';
                 const status = rec.status || 'Complete';
                 const statusStyle = getStatusColor(status);

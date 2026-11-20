@@ -23,17 +23,17 @@ export const RamachandranPlot: React.FC<RamachandranPlotProps> = ({
   const toCanvasY = (psi: number) => ((180 - psi) / 360) * PLOT_SIZE;
 
   return (
-    <div className={`bg-[#0B0F17] border border-slate-800 rounded-2xl p-4 space-y-3 font-sans ${className}`}>
+    <div className={`bg-[#0B0F17] border border-slate-800 rounded-2xl p-3 sm:p-4 space-y-3 font-sans ${className}`}>
       {/* Header & Quality Metrics */}
       <div className="flex items-center justify-between flex-wrap gap-2 border-b border-slate-800/80 pb-3">
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-purple-400" />
+          <div className="w-2 h-2 rounded-full bg-purple-400 shrink-0" />
           <h4 className="text-xs font-bold text-white tracking-wide uppercase font-mono">
             Ramachandran Φ / Ψ Torsion Distribution
           </h4>
         </div>
 
-        <div className="flex items-center gap-3 text-xs font-mono">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs font-mono">
           <span className="flex items-center gap-1 text-emerald-400 font-semibold" title="Core Favored Conformations">
             <CheckCircle className="w-3 h-3" />
             {stats.favoredPercent}% Favored ({stats.favoredCount})
@@ -51,10 +51,10 @@ export const RamachandranPlot: React.FC<RamachandranPlotProps> = ({
         </div>
       </div>
 
-      <div className="flex flex-col md:flex-row items-center gap-6 justify-center">
+      <div className="flex flex-col md:flex-row items-center gap-4 sm:gap-6 justify-center">
         {/* Interactive 2D Scatter Canvas */}
-        <div className="relative border border-slate-800 rounded-xl overflow-hidden bg-[#07090D] shrink-0 shadow-inner">
-          <svg width={PLOT_SIZE} height={PLOT_SIZE} className="select-none">
+        <div className="relative border border-slate-800 rounded-xl overflow-hidden bg-[#07090D] w-full max-w-[280px] shrink-0 shadow-inner">
+          <svg viewBox={`0 0 ${PLOT_SIZE} ${PLOT_SIZE}`} className="w-full h-auto aspect-square select-none block">
             {/* Background Region Contours */}
             {/* Alpha-Helix Favored Region */}
             <rect

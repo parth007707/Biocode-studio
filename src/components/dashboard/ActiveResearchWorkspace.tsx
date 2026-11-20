@@ -22,11 +22,12 @@ export const ActiveResearchWorkspace: React.FC<ActiveResearchWorkspaceProps> = (
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
   const cleanSeq = currentTarget.sequence?.toUpperCase().replace(/[^A-Z]/g, '') || '';
-  const seqLength = currentTarget.totalLength || cleanSeq.length || 393;
+  const hasTarget = Boolean(cleanSeq);
+  const seqLength = currentTarget.totalLength || cleanSeq.length || 0;
   const isProtein = currentTarget.sequenceType?.toLowerCase().includes('prot') ?? true;
 
   // Preview slice for sequence ribbon (48 residues)
-  const ribbonSlice = cleanSeq.slice(0, 48) || 'MEEPQSDPSVEPPLSQETFSDLWKLLPENNVLSPLPSQAMDDLMLSPDD';
+  const ribbonSlice = cleanSeq.slice(0, 48);
 
   const getResidueColor = (char: string) => {
     if (isProtein) {
@@ -44,6 +45,60 @@ export const ActiveResearchWorkspace: React.FC<ActiveResearchWorkspaceProps> = (
     }
   };
 
+  if (!hasTarget) {
+    return (
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-[700] font-display uppercase tracking-wider text-sky-700 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-sky-400 shadow-xs" />
+            <span>ACTIVE RESEARCH TARGET</span>
+          </h2>
+          <span className="text-[11px] font-sans font-medium text-slate-500 hidden sm:inline">
+            Empty Workspace · Ready
+          </span>
+        </div>
+
+        <div className="bg-white border border-sky-200/80 rounded-2xl p-6 sm:p-8 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-5">
+          <div className="flex items-center gap-4 text-center sm:text-left flex-col sm:flex-row">
+            <div className="w-12 h-12 rounded-2xl bg-sky-50 border border-sky-200 flex items-center justify-center text-sky-600 shrink-0">
+              <Dna className="w-6 h-6" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-sm sm:text-base font-bold font-display text-slate-900">
+                No active sequence target loaded
+              </h3>
+              <p className="text-xs sm:text-sm text-slate-600 font-sans max-w-xl">
+                Search NCBI or UniProt in the Biological Data Explorer, paste a FASTA sequence, or start a new project to begin your analysis.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-2.5 shrink-0 font-sans">
+            <button
+              type="button"
+              onClick={onContinueAnalysis}
+              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 text-white text-xs font-[600] tracking-wide transition-all flex items-center gap-2 cursor-pointer shadow-[0_4px_12px_rgba(14,165,233,0.3)] hover:-translate-y-0.5 active:scale-95"
+            >
+              <Play className="w-3.5 h-3.5 fill-white" />
+              <span>LOAD SEQUENCE</span>
+            </button>
+
+            {onAskBioAi && (
+              <button
+                type="button"
+                onClick={onAskBioAi}
+                className="px-4 py-2.5 rounded-xl bg-pink-50 hover:bg-pink-100 border border-pink-200 text-pink-700 text-xs font-[600] tracking-wide transition-all flex items-center gap-2 cursor-pointer shadow-2xs hover:-translate-y-0.5 active:scale-95"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-pink-600" />
+                <span>ASK BIOAI</span>
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
@@ -56,14 +111,14 @@ export const ActiveResearchWorkspace: React.FC<ActiveResearchWorkspaceProps> = (
         </span>
       </div>
 
-      <div className="bg-white border border-sky-200/80 rounded-2xl p-6 shadow-sm hover:shadow-md transition-all duration-300 relative">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+      <div className="bg-white border border-sky-200/80 rounded-2xl p-4 sm:p-6 shadow-sm hover:shadow-md transition-all duration-300 relative">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 items-center">
           {/* Target Metadata & Actions (Left ~60%) */}
-          <div className="lg:col-span-7 space-y-4 font-sans">
+          <div className="lg:col-span-7 space-y-4 font-sans min-w-0">
             {/* Clean Horizontal Target Metrics Bar */}
             <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex items-center gap-3 flex-wrap">
-                <span className="text-2xl sm:text-3xl font-[700] font-mono text-slate-900 tracking-tight">
+              <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap min-w-0">
+                <span className="text-xl sm:text-3xl font-[700] font-mono text-slate-900 tracking-tight break-all">
                   {currentTarget.accession}
                 </span>
 
@@ -103,7 +158,7 @@ export const ActiveResearchWorkspace: React.FC<ActiveResearchWorkspaceProps> = (
                   </button>
 
                   {isDropdownOpen && (
-                    <div className="absolute right-0 mt-1.5 w-64 bg-white border border-slate-200 rounded-xl shadow-lg py-1.5 z-30 font-sans text-xs max-h-56 overflow-y-auto">
+                    <div className="absolute left-0 sm:left-auto sm:right-0 mt-1.5 w-64 max-w-[calc(100vw-3rem)] bg-white border border-slate-200 rounded-xl shadow-lg py-1.5 z-30 font-sans text-xs max-h-56 overflow-y-auto">
                       {availableSequences.map((seq) => (
                         <button
                           key={seq.id || seq.accession}
@@ -166,8 +221,8 @@ export const ActiveResearchWorkspace: React.FC<ActiveResearchWorkspaceProps> = (
           </div>
 
           {/* Sequence Ribbon Visual Preview (Right ~40%) */}
-          <div className="lg:col-span-5 bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2.5">
-            <div className="flex items-center justify-between text-xs font-sans text-slate-600">
+          <div className="lg:col-span-5 bg-slate-50 border border-slate-200 rounded-xl p-3.5 sm:p-4 space-y-2.5 min-w-0">
+            <div className="flex items-center justify-between gap-2 flex-wrap text-xs font-sans text-slate-600">
               <span className="flex items-center gap-1.5 font-[600] text-slate-800 font-display">
                 <Layers className="w-3.5 h-3.5 text-sky-600" />
                 <span>Sequence Map</span>
@@ -176,7 +231,7 @@ export const ActiveResearchWorkspace: React.FC<ActiveResearchWorkspaceProps> = (
             </div>
 
             {/* Tile Ribbon Display */}
-            <div className="grid grid-cols-12 gap-1 font-mono text-[10px] font-bold select-all">
+            <div className="grid grid-cols-8 sm:grid-cols-12 gap-1 font-mono text-[10px] font-bold select-all">
               {ribbonSlice.split('').map((char, idx) => (
                 <div
                   key={idx}
@@ -189,7 +244,7 @@ export const ActiveResearchWorkspace: React.FC<ActiveResearchWorkspaceProps> = (
             </div>
 
             {/* Ribbon Legend */}
-            <div className="flex items-center justify-between text-[10px] font-sans font-medium text-slate-500 pt-1.5 border-t border-slate-200">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-sans font-medium text-slate-500 pt-1.5 border-t border-slate-200">
               <span className="flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full bg-amber-500" /> Hydrophobic
               </span>

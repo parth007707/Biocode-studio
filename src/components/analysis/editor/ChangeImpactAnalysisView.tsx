@@ -132,14 +132,14 @@ export const ChangeImpactAnalysisView: React.FC<ChangeImpactAnalysisViewProps> =
       {/* ========================================================================= */}
       {/* 1. EXECUTIVE IMPACT HEADER & SEVERITY HERO                                */}
       {/* ========================================================================= */}
-      <div className="p-6 rounded-2xl bg-white/90 border border-[#FECDD3] shadow-[0_4px_20px_rgba(239,68,68,0.06)] space-y-6">
+      <div className="p-4 sm:p-6 rounded-2xl bg-white/90 border border-[#FECDD3] shadow-[0_4px_20px_rgba(239,68,68,0.06)] space-y-5 sm:space-y-6">
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 pb-5 border-b border-[#FECDD3]">
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 min-w-0">
             <div className="flex items-center gap-2.5 flex-wrap">
-              <span className="p-2 rounded-xl bg-[#FFF1F2] text-[#DC2626] border border-[#FECDD3]">
+              <span className="p-2 rounded-xl bg-[#FFF1F2] text-[#DC2626] border border-[#FECDD3] shrink-0">
                 <Sparkles className="w-4 h-4" />
               </span>
-              <h2 className="text-lg font-bold text-[#0F172A] tracking-tight font-mono">
+              <h2 className="text-base sm:text-lg font-bold text-[#0F172A] tracking-tight font-mono">
                 Edited Sequence Change Impact Analysis
               </h2>
               <span
@@ -195,7 +195,7 @@ export const ChangeImpactAnalysisView: React.FC<ChangeImpactAnalysisViewProps> =
         {/* 2. BIOPHYSICAL DELTA METRICS GRID (BEFORE VS AFTER)                     */}
         {/* ======================================================================= */}
         <div>
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
             <h3 className="text-xs font-mono font-bold text-[#0F172A] uppercase tracking-wider flex items-center gap-1.5">
               <Scale className="w-3.5 h-3.5 text-[#DC2626]" />
               <span>Biophysical & Physicochemical Comparative Deltas</span>
@@ -420,11 +420,11 @@ export const ChangeImpactAnalysisView: React.FC<ChangeImpactAnalysisViewProps> =
       {/* ========================================================================= */}
       {/* 4. PER-MUTATION DETAILED IMPACT TABLE & CARDS                             */}
       {/* ========================================================================= */}
-      <div className="p-6 rounded-2xl bg-white/90 border border-[#FECDD3] shadow-[0_4px_20px_rgba(239,68,68,0.06)] space-y-5">
+      <div className="p-4 sm:p-6 rounded-2xl bg-white/90 border border-[#FECDD3] shadow-[0_4px_20px_rgba(239,68,68,0.06)] space-y-5">
         {/* Header & Filter Controls */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
-            <h3 className="text-sm font-bold text-[#0F172A] tracking-tight flex items-center gap-2 font-mono">
+            <h3 className="text-sm font-bold text-[#0F172A] tracking-tight flex flex-wrap items-center gap-2 font-mono">
               <Layers className="w-4 h-4 text-[#DC2626]" />
               <span>Residue-Level Impact Breakdown</span>
               <span className="px-2 py-0.5 rounded-full text-xs font-mono bg-[#FFF1F2] text-[#DC2626] border border-[#FECDD3]">
@@ -447,13 +447,13 @@ export const ChangeImpactAnalysisView: React.FC<ChangeImpactAnalysisViewProps> =
             />
 
             {/* Severity Filter */}
-            <div className="flex items-center bg-[#F8FAFC] rounded-xl border border-[#CBD5E1] p-0.5">
+            <div className="flex items-center bg-[#F8FAFC] rounded-xl border border-[#CBD5E1] p-0.5 overflow-x-auto max-w-full">
               {(['ALL', 'CRITICAL', 'HIGH', 'MODERATE', 'LOW', 'NEUTRAL'] as const).map((sev) => (
                 <button
                   key={sev}
                   type="button"
                   onClick={() => setSeverityFilter(sev)}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-semibold transition-all cursor-pointer ${
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-semibold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                     severityFilter === sev
                       ? 'bg-[#DC2626] text-white shadow-xs'
                       : 'text-[#64748B] hover:text-[#0F172A]'
@@ -523,7 +523,7 @@ export const ChangeImpactAnalysisView: React.FC<ChangeImpactAnalysisViewProps> =
                     </div>
 
                     {/* Quick Metrics Badges on the right */}
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
                       {detail.granthamScore !== undefined && (
                         <div
                           className="px-2 py-1 rounded-md bg-[#FFF7ED] border border-[#FED7AA] text-[10px] font-mono text-[#C2410C]"

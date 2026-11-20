@@ -25,6 +25,7 @@ import {
   generateProteinInterpretation,
   ScientificInterpretation
 } from '../../../lib/bio/scientificInterpretation';
+import { ResolvedStructure3D } from '../../../lib/bio/structure3d/types';
 import { predictRNASecondaryStructure } from '../../../lib/bio/rnaAnalysis';
 
 interface SequenceAnalysisResultsProps {
@@ -80,6 +81,7 @@ export const SequenceAnalysisResults: React.FC<SequenceAnalysisResultsProps> = (
 }) => {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showDetailedSummary, setShowDetailedSummary] = useState(false);
+  const [resolvedStructure, setResolvedStructure] = useState<ResolvedStructure3D | null>(null);
 
   // Derive Scientific Interpretation matching biophysical characteristics
   const interpretation: ScientificInterpretation | null = useMemo(() => {
@@ -111,26 +113,28 @@ export const SequenceAnalysisResults: React.FC<SequenceAnalysisResultsProps> = (
     return null;
   }, [activeAnalysisResult, sequence, sequenceType, accession, organism]);
 
-  // Determine standard 3D Structure status badge
-  const isPdbExperimental = Boolean(
-    (accession && accession.length === 4 && /^[0-9][a-zA-Z0-9]{3}$/i.test(accession)) ||
-    accession === 'NP_000537' || accession === 'NP_000509' || accession === 'NP_000198' || 
-    accession === 'NP_000546' || accession === 'YP_009724390' || accession === 'P04637' ||
-    accession === 'P68871' || accession === 'P01308' || accession === 'P38398'
-  );
+  // Determine 3D Structure status badge dynamically from genuine coordinate resolution
+  const isUnavail = !resolvedStructure || resolvedStructure.structureType === 'UNAVAILABLE';
+  const isPred = resolvedStructure?.classification === 'Predicted' || resolvedStructure?.structureType === 'PREDICTED';
+  const isPart = Boolean(resolvedStructure?.coverageInfo?.isPartial);
+
   const structureStatusBadge = simulationResult
     ? 'Simulated Structure'
-    : isModified
-    ? 'Modified Structure'
-    : isPdbExperimental
-    ? 'Experimental Structure'
-    : 'Sequence-Derived Visualization';
+    : isModified && !isUnavail
+    ? 'Mutated Homology Model'
+    : isUnavail
+    ? 'No Verified Structure'
+    : isPred
+    ? `Predicted (${resolvedStructure?.sourceName || 'AlphaFold DB'})`
+    : isPart
+    ? `Partial Experimental (${resolvedStructure?.sourceId || 'PDB'})`
+    : `Experimental (${resolvedStructure?.sourceId || 'PDB'})`;
 
-  const structureBadgeClass = simulationResult || isModified
-    ? 'bg-purple-900/50 text-purple-300 border-purple-500/50'
-    : isPdbExperimental
-    ? 'bg-emerald-900/50 text-emerald-300 border-emerald-500/50'
-    : 'bg-sky-900/50 text-sky-300 border-sky-500/50';
+  const structureBadgeClass = isUnavail
+    ? 'bg-slate-100 text-slate-700 border-slate-300'
+    : isPred || simulationResult || isModified
+    ? 'bg-sky-50 text-sky-700 border-sky-200'
+    : 'bg-emerald-50 text-emerald-700 border-emerald-200';
 
   const normType = (activeAnalysisResult?.type || (sequenceType === 'UNKNOWN' ? 'PROTEIN' : sequenceType)).toUpperCase();
 
@@ -187,15 +191,15 @@ export const SequenceAnalysisResults: React.FC<SequenceAnalysisResultsProps> = (
       {/* ========================================================================= */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
         {/* LEFT COLUMN: 3D BIOLOGICAL STRUCTURE VISUALIZATION */}
-        <div className="bg-white border border-[#E2E8F0] rounded-2xl p-5 shadow-xs flex flex-col justify-between space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-[#E2E8F0]">
-            <div className="flex items-center gap-2">
-              <Dna className="w-4 h-4 text-[#0284C7]" />
-              <h3 className="font-mono font-bold text-xs uppercase tracking-wider text-[#0F172A]">
+        <div className="bg-white border border-[#E2E8F0] rounded-2xl p-3.5 sm:p-5 shadow-xs flex flex-col justify-between space-y-4 min-w-0">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#E2E8F0]">
+            <div className="flex items-center gap-2 min-w-0">
+              <Dna className="w-4 h-4 text-[#0284C7] shrink-0" />
+              <h3 className="font-mono font-bold text-xs uppercase tracking-wider text-[#0F172A] truncate">
                 3D Biological Structure Visualization
               </h3>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-[11px] font-mono text-[#64748B] hidden sm:inline">
                 Interactive WebGL Canvas (Orbit / Zoom / Rotate)
               </span>
@@ -206,7 +210,7 @@ export const SequenceAnalysisResults: React.FC<SequenceAnalysisResultsProps> = (
           </div>
 
           {/* 3D Structure Viewer Engine Container */}
-          <div className="rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] shadow-2xs overflow-hidden min-h-[480px] flex-1 flex flex-col relative">
+          <div className="rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] shadow-2xs overflow-hidden min-h-[300px] sm:min-h-[420px] lg:min-h-[480px] flex-1 flex flex-col relative">
             <SequenceStructureViewer
               sequence={sequence}
               sequenceType={
@@ -222,19 +226,22 @@ export const SequenceAnalysisResults: React.FC<SequenceAnalysisResultsProps> = (
               simulationResult={simulationResult}
               accessionOrPdbId={accession}
               sequenceVersion={`v${versionNumber}`}
+              onStructureResolved={setResolvedStructure}
               className="w-full h-full flex-1"
             />
           </div>
 
-          <div className="text-[11px] font-mono text-[#64748B] flex items-center justify-between pt-1">
-            <span>Interactive Three.js · PDB / AlphaFold Coordinates</span>
-            <span className="text-[#0284C7] font-semibold">{accession}</span>
+          <div className="text-[11px] font-mono text-[#64748B] flex flex-wrap items-center justify-between gap-1.5 pt-1">
+            <span>Three.js WebGL · RCSB PDB / AlphaFold DB Coordinates</span>
+            <span className="text-[#0284C7] font-semibold truncate max-w-full">
+              {resolvedStructure?.sourceId ? `${accession} → ${resolvedStructure.sourceId}` : accession}
+            </span>
           </div>
         </div>
 
         {/* RIGHT COLUMN: SCIENTIFIC INTERPRETATION (BIOPHYSICAL ANALYSIS) */}
-        <div className="bg-white border border-[#E2E8F0] rounded-2xl p-5 shadow-xs flex flex-col justify-between space-y-4 text-[#0F172A]">
-          <div className="flex items-center justify-between pb-3 border-b border-[#E2E8F0]">
+        <div className="bg-white border border-[#E2E8F0] rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col justify-between space-y-4 text-[#0F172A] min-w-0">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#E2E8F0]">
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-[#0284C7]" />
               <h3 className="font-mono font-bold text-xs uppercase tracking-wider text-[#0F172A]">
@@ -247,7 +254,7 @@ export const SequenceAnalysisResults: React.FC<SequenceAnalysisResultsProps> = (
           </div>
 
           {/* Top Row: Two KPI metric cards */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-3 space-y-1">
               <span className="text-[10px] font-mono uppercase tracking-wider text-[#64748B] block font-bold">
                 {kpi1Title}
@@ -522,14 +529,14 @@ export const SequenceAnalysisResults: React.FC<SequenceAnalysisResultsProps> = (
       {/* SECTION: CHANGES & COMPARISONS (WHEN WORKING COPY IS MODIFIED)             */}
       {/* ========================================================================= */}
       {isModified && (
-        <div className="space-y-4 bg-white border border-[#E2E8F0] rounded-2xl p-6 shadow-xs animate-in fade-in duration-200">
+        <div className="space-y-4 bg-white border border-[#E2E8F0] rounded-2xl p-4 sm:p-6 shadow-xs animate-in fade-in duration-200">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#E2E8F0]">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 min-w-0">
               <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0 bg-amber-100 text-amber-800 border border-amber-300">
                 <Zap className="w-4 h-4" />
               </div>
-              <div>
-                <div className="flex items-center gap-2">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
                   <h4 className="font-bold text-xs font-mono text-[#0F172A] uppercase tracking-wider">
                     Active Modifications ({mutations.length} Detected vs V1)
                   </h4>
@@ -543,7 +550,7 @@ export const SequenceAnalysisResults: React.FC<SequenceAnalysisResultsProps> = (
               </div>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0 font-mono text-xs">
+            <div className="flex flex-wrap items-center gap-2 shrink-0 font-mono text-xs">
               <button
                 type="button"
                 onClick={onDiscardChanges}
@@ -594,8 +601,8 @@ export const SequenceAnalysisResults: React.FC<SequenceAnalysisResultsProps> = (
             <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider font-mono">
               Comparative Analysis (Original V1 vs Modified Working Copy)
             </span>
-            <div className="border border-[#E2E8F0] rounded-xl overflow-hidden font-mono text-xs">
-              <table className="w-full text-left">
+            <div className="border border-[#E2E8F0] rounded-xl overflow-x-auto font-mono text-xs">
+              <table className="w-full min-w-[460px] text-left">
                 <thead className="bg-[#F8FAFC] text-[#475569] border-b border-[#E2E8F0]">
                   <tr>
                     <th className="p-3">Metric</th>
@@ -832,16 +839,16 @@ export const SequenceAnalysisResults: React.FC<SequenceAnalysisResultsProps> = (
       {/* ========================================================================= */}
       {/* SECTION: SCIENTIFIC SEQUENCE REPORT & ARTIFACT EXPORT                     */}
       {/* ========================================================================= */}
-      <div className="bg-white border border-[#CBD5E1] rounded-3xl p-6 sm:p-10 shadow-sm space-y-8 font-sans">
+      <div className="bg-white border border-[#CBD5E1] rounded-2xl sm:rounded-3xl p-4 sm:p-6 md:p-10 shadow-sm space-y-6 sm:space-y-8 font-sans">
         <div className="border-b-2 border-slate-900 pb-5 flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 mb-1">
-              <FlaskConical className="w-5 h-5 text-[#0284C7]" />
+              <FlaskConical className="w-5 h-5 text-[#0284C7] shrink-0" />
               <span className="text-xs font-mono font-bold tracking-widest text-[#0284C7] uppercase">
                 BioCode Studio · Computational Sequence Intelligence
               </span>
             </div>
-            <h2 className="text-2xl sm:text-3xl font-bold font-display text-slate-900 tracking-tight">
+            <h2 className="text-xl sm:text-2xl md:text-3xl font-bold font-display text-slate-900 tracking-tight">
               SEQUENCE ANALYSIS REPORT
             </h2>
             <p className="text-xs text-slate-600 font-sans mt-0.5">
@@ -849,12 +856,12 @@ export const SequenceAnalysisResults: React.FC<SequenceAnalysisResultsProps> = (
             </p>
           </div>
 
-          <div className="text-right font-mono text-xs text-slate-600 space-y-0.5">
+          <div className="text-left md:text-right font-mono text-xs text-slate-600 space-y-0.5">
             <div>
               Report Date: <strong className="text-slate-900">{new Date().toLocaleDateString()}</strong>
             </div>
             <div>
-              Active Target: <strong className="text-[#0284C7]">{accession}</strong>
+              Active Target: <strong className="text-[#0284C7] break-all">{accession}</strong>
             </div>
             <div>
               Status:{' '}
@@ -866,16 +873,16 @@ export const SequenceAnalysisResults: React.FC<SequenceAnalysisResultsProps> = (
         </div>
 
         {/* Document Export Action Bar */}
-        <div className="pt-2 flex items-center justify-between flex-wrap gap-4">
+        <div className="pt-2 flex items-center justify-between flex-wrap gap-3 sm:gap-4">
           <div className="text-xs text-slate-500 font-mono">
             Export matching computational report artifact:
           </div>
 
-          <div className="flex items-center gap-3 font-mono text-xs">
+          <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 font-mono text-xs w-full sm:w-auto">
             <button
               type="button"
               onClick={onExportJSON}
-              className="px-4 py-2.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 font-semibold flex items-center gap-2 cursor-pointer shadow-2xs transition-colors"
+              className="flex-1 sm:flex-initial justify-center px-4 py-2.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 font-semibold flex items-center gap-2 cursor-pointer shadow-2xs transition-colors"
             >
               <Download className="w-4 h-4 text-slate-600" />
               <span>Export JSON</span>
@@ -883,7 +890,7 @@ export const SequenceAnalysisResults: React.FC<SequenceAnalysisResultsProps> = (
             <button
               type="button"
               onClick={onExportPDF}
-              className="px-5 py-2.5 rounded-xl bg-[#0284C7] hover:bg-sky-600 text-white font-bold flex items-center gap-2 cursor-pointer shadow-xs transition-colors active:scale-95"
+              className="flex-1 sm:flex-initial justify-center px-5 py-2.5 rounded-xl bg-[#0284C7] hover:bg-sky-600 text-white font-bold flex items-center gap-2 cursor-pointer shadow-xs transition-colors active:scale-95"
             >
               <FileText className="w-4 h-4 text-white" />
               <span>Export Report PDF</span>
@@ -899,22 +906,22 @@ export const SequenceAnalysisResults: React.FC<SequenceAnalysisResultsProps> = (
         <button
           type="button"
           onClick={() => setShowAdvanced(!showAdvanced)}
-          className="w-full p-4 text-left flex items-center justify-between bg-slate-50/70 hover:bg-slate-100/70 transition-colors cursor-pointer"
+          className="w-full p-4 text-left flex items-center justify-between gap-2 bg-slate-50/70 hover:bg-slate-100/70 transition-colors cursor-pointer"
         >
-          <div className="flex items-center gap-2 text-xs font-bold font-mono text-[#0F172A]">
-            <Layers className="w-4 h-4 text-[#0284C7]" />
-            <span>Advanced Analysis &amp; Raw Sequence Tools</span>
+          <div className="flex items-center gap-2 text-xs font-bold font-mono text-[#0F172A] min-w-0">
+            <Layers className="w-4 h-4 text-[#0284C7] shrink-0" />
+            <span className="truncate">Advanced Analysis &amp; Raw Sequence Tools</span>
           </div>
-          <div className="flex items-center gap-1 text-xs text-[#64748B] font-mono">
+          <div className="flex items-center gap-1 text-xs text-[#64748B] font-mono shrink-0">
             <span>{showAdvanced ? 'Hide' : 'Show'}</span>
             {showAdvanced ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
           </div>
         </button>
 
         {showAdvanced && (
-          <div className="p-6 border-t border-[#E2E8F0] space-y-6">
+          <div className="p-4 sm:p-6 border-t border-[#E2E8F0] space-y-6">
             <div className="space-y-2 font-mono text-xs">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <span className="text-[#0F172A] font-bold">
                   Raw Canonical Sequence ({length} residues)
                 </span>
@@ -927,7 +934,7 @@ export const SequenceAnalysisResults: React.FC<SequenceAnalysisResultsProps> = (
                   <span>{copiedSeq ? 'Copied' : 'Copy Sequence'}</span>
                 </button>
               </div>
-              <div className="bg-[#F8FAFC] p-4 rounded-xl border border-[#CBD5E1] text-[#0F172A] break-all leading-relaxed max-h-48 overflow-y-auto select-all">
+              <div className="bg-[#F8FAFC] p-3 sm:p-4 rounded-xl border border-[#CBD5E1] text-[#0F172A] break-all leading-relaxed max-h-48 overflow-y-auto select-all">
                 {sequence.match(/.{1,10}/g)?.join(' ') || sequence}
               </div>
             </div>
@@ -937,8 +944,8 @@ export const SequenceAnalysisResults: React.FC<SequenceAnalysisResultsProps> = (
                 <h5 className="font-bold text-[#0F172A] uppercase tracking-wider">
                   Open Reading Frames (ORFs) Detail
                 </h5>
-                <div className="border border-[#E2E8F0] rounded-xl overflow-hidden max-h-60 overflow-y-auto">
-                  <table className="w-full text-left text-xs">
+                <div className="border border-[#E2E8F0] rounded-xl overflow-x-auto max-h-60 overflow-y-auto">
+                  <table className="w-full min-w-[480px] text-left text-xs">
                     <thead className="bg-[#F8FAFC] text-[#475569] border-b border-[#E2E8F0]">
                       <tr>
                         <th className="p-2.5">Frame</th>

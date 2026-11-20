@@ -87,30 +87,30 @@ export const NewSequenceModal: React.FC<NewSequenceModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs font-sans animate-fadeIn">
-      <div className="bg-white rounded-3xl border border-sky-200 shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/50 backdrop-blur-xs font-sans animate-fadeIn">
+      <div className="bg-white rounded-2xl sm:rounded-3xl border border-sky-200 shadow-2xl max-w-2xl w-full max-h-[92dvh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="p-6 pb-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-sky-50 to-indigo-50">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-2xl bg-sky-500 text-white shadow-xs">
+        <div className="p-4 sm:p-6 pb-4 border-b border-slate-100 flex items-center justify-between gap-3 bg-gradient-to-r from-sky-50 to-indigo-50">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="p-2.5 rounded-2xl bg-sky-500 text-white shadow-xs shrink-0">
               <Dna className="w-5 h-5" />
             </div>
-            <div>
-              <h3 className="text-lg font-bold text-[#0F172A] font-display">Create Custom Biological Sequence</h3>
+            <div className="min-w-0">
+              <h3 className="text-base sm:text-lg font-bold text-[#0F172A] font-display truncate">Create Custom Biological Sequence</h3>
               <p className="text-xs text-slate-600 font-sans">Initialize a custom DNA, RNA, or Protein sequence for real-time analysis</p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-white transition-colors cursor-pointer"
+            className="p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-white transition-colors cursor-pointer shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Content */}
-        <form onSubmit={handleSubmit} className="p-6 overflow-y-auto space-y-5 custom-scrollbar flex-1">
+        <form onSubmit={handleSubmit} className="p-4 sm:p-6 overflow-y-auto space-y-5 custom-scrollbar flex-1">
           {errorMsg && (
             <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
@@ -193,9 +193,9 @@ export const NewSequenceModal: React.FC<NewSequenceModalProps> = ({
           </div>
 
           <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
               <label className="font-semibold text-slate-700">Raw Biological Sequence *</label>
-              <span className="font-mono text-xs font-bold text-[#0284C7] bg-sky-50 px-2.5 py-0.5 rounded border border-sky-200">
+              <span className="font-mono text-[11px] sm:text-xs font-bold text-[#0284C7] bg-sky-50 px-2.5 py-0.5 rounded border border-sky-200">
                 Character Count: {rawSequence.length.toLocaleString()} | Validated: {cleanSeq.length.toLocaleString()} {sequenceType === 'PROTEIN' ? 'aa' : 'bp'}
               </span>
             </div>
@@ -231,18 +231,18 @@ export const NewSequenceModal: React.FC<NewSequenceModalProps> = ({
           </div>
 
           {/* Footer actions */}
-          <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-3">
+          <div className="pt-3 border-t border-slate-100 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2.5 sm:gap-3">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              className="px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer text-center"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isSubmitting || !cleanSeq || !name.trim()}
-              className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-2 transition-all shadow-xs cursor-pointer active:scale-95"
+              className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 disabled:opacity-50 text-white text-xs font-semibold flex items-center justify-center gap-2 transition-all shadow-xs cursor-pointer active:scale-95"
             >
               <span>Create &amp; Analyze Sequence</span>
               <ArrowRight className="w-4 h-4" />

@@ -453,11 +453,13 @@ app.post("/api/structure/resolve", async (req, res) => {
       sequenceHash,
       accession,
       sequenceType,
+      preferredPdbId,
       allowSequenceDerivedFallback,
       mutations,
       originalSequence,
       templatePdbId,
-      templatePdbText
+      templatePdbText,
+      autoPredict
     } = req.body;
 
     if (!sequence || typeof sequence !== "string" || !sequence.trim()) {
@@ -475,11 +477,13 @@ app.post("/api/structure/resolve", async (req, res) => {
       sequenceHash,
       accession,
       sequenceType,
-      allowSequenceDerivedFallback: allowSequenceDerivedFallback !== false,
+      preferredPdbId,
+      allowSequenceDerivedFallback: allowSequenceDerivedFallback === true,
       mutations,
       originalSequence,
       templatePdbId,
-      templatePdbText
+      templatePdbText,
+      autoPredict: autoPredict === true
     });
 
     return res.json({

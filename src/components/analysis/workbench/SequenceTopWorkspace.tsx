@@ -198,15 +198,15 @@ export const SequenceTopWorkspace: React.FC<SequenceTopWorkspaceProps> = ({
         {rows.map((r) => (
           <div
             key={r.start}
-            className="flex items-center gap-3 sm:gap-4 py-1 border-b border-slate-200/60 last:border-b-0 hover:bg-slate-100/60 rounded px-1.5 transition-colors w-full"
+            className="flex items-center gap-2.5 sm:gap-4 py-1 border-b border-slate-200/60 last:border-b-0 hover:bg-slate-100/60 rounded px-1.5 transition-colors min-w-max sm:min-w-0 w-full"
           >
-            <span className="text-slate-400 select-none text-[11px] sm:text-xs w-12 sm:w-16 text-right shrink-0 font-mono font-semibold">
+            <span className="text-slate-400 select-none text-[11px] sm:text-xs w-10 sm:w-16 text-right shrink-0 font-mono font-semibold">
               {r.start}
             </span>
 
-            <div className="flex-1 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 sm:gap-3 md:gap-4 font-mono font-medium text-xs sm:text-[13px] text-[#0F172A] tracking-widest select-text w-full">
+            <div className="flex-1 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 sm:gap-3 md:gap-4 font-mono font-medium text-xs sm:text-[13px] text-[#0F172A] tracking-wider sm:tracking-widest select-text w-full">
               {r.blocks.map((b, bIdx) => (
-                <span key={bIdx} className="tracking-widest whitespace-nowrap">
+                <span key={bIdx} className="tracking-wider sm:tracking-widest whitespace-nowrap">
                   {b.chars.map((c) => (
                     c.desc ? (
                       <mark
@@ -234,15 +234,15 @@ export const SequenceTopWorkspace: React.FC<SequenceTopWorkspaceProps> = ({
   }, [sequence, currentWindowSeq, currentPage, totalPages, windowOffset, baseOffset, isLoadingSequence, sequenceError, invalidFindings, unit]);
 
   return (
-    <div className="bg-white border border-[#E2E8F0] rounded-2xl p-6 md:p-8 shadow-xs space-y-6">
+    <div className="bg-white border border-[#E2E8F0] rounded-2xl p-4 sm:p-6 md:p-8 shadow-xs space-y-5 sm:space-y-6">
       {/* SECTION 1 — SEQUENCE AT THE TOP */}
       <div className="border-b border-[#E2E8F0] pb-5">
         <span className="text-[11px] font-mono font-bold tracking-widest text-[#0284C7] uppercase block mb-1">
           BIOLOGICAL SEQUENCE
         </span>
         <div className="flex flex-col md:flex-row md:items-baseline justify-between gap-3">
-          <div>
-            <h1 className="text-2xl md:text-3xl font-bold font-mono text-[#0F172A] tracking-tight">
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold font-mono text-[#0F172A] tracking-tight break-words">
               {accession}
             </h1>
             <p className="text-sm md:text-base font-medium text-[#475569] mt-0.5">
@@ -251,7 +251,7 @@ export const SequenceTopWorkspace: React.FC<SequenceTopWorkspaceProps> = ({
           </div>
 
           {/* Quick Target Switch Controls */}
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={onOpenLoadModal}
@@ -372,14 +372,14 @@ export const SequenceTopWorkspace: React.FC<SequenceTopWorkspaceProps> = ({
         )}
 
         {/* Full-Width Scrollable Sequence Box (Light Theme) */}
-        <div className="w-full bg-[#F8FAFC] text-[#0F172A] font-mono text-xs rounded-xl p-4 border border-[#CBD5E1] shadow-inner max-h-64 overflow-y-auto custom-scrollbar select-text leading-relaxed tracking-wider">
+        <div className="w-full bg-[#F8FAFC] text-[#0F172A] font-mono text-xs rounded-xl p-3 sm:p-4 border border-[#CBD5E1] shadow-inner max-h-64 overflow-y-auto overflow-x-auto custom-scrollbar select-text leading-relaxed tracking-wider">
           {formattedSequenceDisplay}
         </div>
       </div>
 
       {/* SECTION 3 — ACTION BAR (4 HORIZONTALLY BALANCED ACTIONS) */}
       <div className="pt-2">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 sm:gap-3">
           {/* 1. Edit Sequence */}
           <button
             type="button"

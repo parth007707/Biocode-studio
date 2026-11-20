@@ -470,7 +470,7 @@ export const ResidueWhatIfSimulator: React.FC<ResidueWhatIfSimulatorProps> = ({ 
   };
 
   return (
-    <div className="bg-white border border-[#E2E8F0] rounded-2xl p-5 md:p-7 space-y-6 shadow-xs font-sans">
+    <div className="bg-white border border-[#E2E8F0] rounded-2xl p-4 sm:p-5 md:p-7 space-y-5 sm:space-y-6 shadow-xs font-sans">
       {/* ------------------------------------------------------------- */}
       {/* HEADER & SIMULATION STATUS INDICATOR                          */}
       {/* ------------------------------------------------------------- */}
@@ -516,7 +516,7 @@ export const ResidueWhatIfSimulator: React.FC<ResidueWhatIfSimulatorProps> = ({ 
         </div>
 
         {/* Change Type Tabs */}
-        <div className="flex items-center bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-1 font-mono text-xs">
+        <div className="flex items-center bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-1 font-mono text-xs overflow-x-auto max-w-full">
           {[
             { id: 'substitution' as const, label: 'Substitution' },
             { id: 'insertion' as const, label: 'Insertion' },
@@ -763,8 +763,8 @@ export const ResidueWhatIfSimulator: React.FC<ResidueWhatIfSimulatorProps> = ({ 
         )}
 
         {/* Add / Update Change Button */}
-        <div className="flex items-center justify-between pt-1">
-          <span className="text-[11px] font-mono text-slate-500">
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+          <span className="text-[11px] font-mono text-slate-500 break-all">
             {mutationMode === 'substitution'
               ? `Preview change: ${currentResidue}${position} → ${candidateResidue}`
               : mutationMode === 'insertion'
@@ -812,10 +812,10 @@ export const ResidueWhatIfSimulator: React.FC<ResidueWhatIfSimulatorProps> = ({ 
             )}
           </div>
 
-          <div className={`border border-[#E2E8F0] rounded-xl overflow-hidden shadow-2xs ${
+          <div className={`border border-[#E2E8F0] rounded-xl overflow-x-auto shadow-2xs ${
             !showAllChanges && pendingChanges.length > 5 ? 'max-h-64 overflow-y-auto' : ''
           }`}>
-            <table className="w-full text-left text-xs">
+            <table className="w-full min-w-[440px] text-left text-xs">
               <thead className="bg-[#F8FAFC] text-[#475569] border-b border-[#E2E8F0]">
                 <tr>
                   <th className="p-3">Pos</th>
@@ -940,16 +940,16 @@ export const ResidueWhatIfSimulator: React.FC<ResidueWhatIfSimulatorProps> = ({ 
               </span>
             </div>
 
-            <div className="flex items-center justify-between flex-wrap gap-4 text-xs">
+            <div className="flex items-center justify-between flex-wrap gap-3 sm:gap-4 text-xs">
               <div>
                 <span className="text-slate-400 block text-[10px]">ORIGINAL BASELINE:</span>
                 <span className="font-bold text-white">V1 ({simulationResult.originalSequence.length} {isProtein ? 'aa' : 'bp'})</span>
               </div>
-              <div className="text-center">
+              <div className="sm:text-center">
                 <span className="text-slate-400 block text-[10px]">STATUS:</span>
                 <span className="font-bold text-purple-300">Temporary Working Copy (In-Silico)</span>
               </div>
-              <div className="text-right">
+              <div className="sm:text-right">
                 <span className="text-slate-400 block text-[10px]">SIMULATED SEQUENCE:</span>
                 <span className="font-bold text-emerald-400">Working Copy ({simulationResult.simulatedSequence.length} {isProtein ? 'aa' : 'bp'})</span>
               </div>
@@ -979,7 +979,7 @@ export const ResidueWhatIfSimulator: React.FC<ResidueWhatIfSimulatorProps> = ({ 
           {/* 5. WHAT-IF CONSEQUENCES (BIOPHYSICAL COMPARISON, Req 10,13) */}
           {/* ----------------------------------------------------------- */}
           <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-2xl p-4 md:p-5 space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <h4 className="text-xs font-bold text-[#0F172A] uppercase tracking-wider">
                 WHAT-IF RESULT: BIOPHYSICAL &amp; SEQUENCE CONSEQUENCES
               </h4>
@@ -990,8 +990,8 @@ export const ResidueWhatIfSimulator: React.FC<ResidueWhatIfSimulatorProps> = ({ 
 
             {isProtein && simulationResult.metrics.protein && (
               <div className="space-y-4">
-                <div className="border border-[#E2E8F0] rounded-xl overflow-hidden bg-white text-xs">
-                  <table className="w-full text-left">
+                <div className="border border-[#E2E8F0] rounded-xl overflow-x-auto bg-white text-xs">
+                  <table className="w-full min-w-[460px] text-left">
                     <thead className="bg-[#F1F5F9] text-[#475569] border-b border-[#E2E8F0]">
                       <tr>
                         <th className="p-3">Biophysical Metric</th>
@@ -1078,8 +1078,8 @@ export const ResidueWhatIfSimulator: React.FC<ResidueWhatIfSimulatorProps> = ({ 
             )}
 
             {!isProtein && simulationResult.metrics.nucleotide && (
-              <div className="border border-[#E2E8F0] rounded-xl overflow-hidden bg-white text-xs">
-                <table className="w-full text-left">
+              <div className="border border-[#E2E8F0] rounded-xl overflow-x-auto bg-white text-xs">
+                <table className="w-full min-w-[440px] text-left">
                   <thead className="bg-[#F1F5F9] text-[#475569] border-b border-[#E2E8F0]">
                     <tr>
                       <th className="p-3">Nucleotide Metric</th>
@@ -1141,11 +1141,11 @@ export const ResidueWhatIfSimulator: React.FC<ResidueWhatIfSimulatorProps> = ({ 
               Apply all {simulationResult.mutations.length} changes to create a single modified working copy.
             </span>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
               <button
                 type="button"
                 onClick={handleDiscardAll}
-                className="px-4 py-2.5 rounded-xl bg-white hover:bg-rose-50 border border-slate-300 text-slate-700 hover:text-rose-700 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                className="flex-1 sm:flex-initial justify-center px-4 py-2.5 rounded-xl bg-white hover:bg-rose-50 border border-slate-300 text-slate-700 hover:text-rose-700 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span>Discard Changes</span>
@@ -1155,7 +1155,7 @@ export const ResidueWhatIfSimulator: React.FC<ResidueWhatIfSimulatorProps> = ({ 
                 type="button"
                 onClick={handleApplyAllChanges}
                 disabled={isApplying}
-                className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-2 transition-all cursor-pointer shadow-xs active:scale-95 disabled:opacity-50"
+                className="flex-1 sm:flex-initial justify-center px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-2 transition-all cursor-pointer shadow-xs active:scale-95 disabled:opacity-50"
               >
                 {isApplying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                 <span>Apply All Changes</span>

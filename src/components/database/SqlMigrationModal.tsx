@@ -95,19 +95,20 @@ drop policy if exists "Users can delete their own projects" on public.projects;
 
 create policy "Users can view their own projects"
   on public.projects for select
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id);
 
 create policy "Users can insert their own projects"
   on public.projects for insert
-  with check (auth.uid() = user_id or user_id is null);
+  with check (auth.uid() = user_id);
 
 create policy "Users can update their own projects"
   on public.projects for update
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 
 create policy "Users can delete their own projects"
   on public.projects for delete
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id);
 
 
 -- ----------------------------------------------------------------------------
@@ -149,19 +150,20 @@ drop policy if exists "Users can delete sequence records" on public.sequence_rec
 
 create policy "Users can view sequence records"
   on public.sequence_records for select
-  using (true);
+  using (auth.uid() = user_id);
 
 create policy "Users can insert sequence records"
   on public.sequence_records for insert
-  with check (auth.uid() = user_id or user_id is null);
+  with check (auth.uid() = user_id);
 
 create policy "Users can update sequence records"
   on public.sequence_records for update
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 
 create policy "Users can delete sequence records"
   on public.sequence_records for delete
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id);
 
 
 -- ----------------------------------------------------------------------------
@@ -178,6 +180,7 @@ create table if not exists public.project_sequences (
 
 create index if not exists idx_project_sequences_project_id on public.project_sequences(project_id);
 create index if not exists idx_project_sequences_sequence_id on public.project_sequences(sequence_id);
+create index if not exists idx_project_sequences_user_id on public.project_sequences(user_id);
 
 alter table public.project_sequences enable row level security;
 
@@ -188,19 +191,20 @@ drop policy if exists "Users can delete project sequences" on public.project_seq
 
 create policy "Users can view project sequences"
   on public.project_sequences for select
-  using (true);
+  using (auth.uid() = user_id);
 
 create policy "Users can insert project sequences"
   on public.project_sequences for insert
-  with check (true);
+  with check (auth.uid() = user_id);
 
 create policy "Users can update project sequences"
   on public.project_sequences for update
-  using (true);
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 
 create policy "Users can delete project sequences"
   on public.project_sequences for delete
-  using (true);
+  using (auth.uid() = user_id);
 
 
 -- ----------------------------------------------------------------------------
@@ -247,19 +251,20 @@ drop policy if exists "Users can delete their own analyses" on public.analyses;
 
 create policy "Users can view their own analyses"
   on public.analyses for select
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id);
 
 create policy "Users can insert their own analyses"
   on public.analyses for insert
-  with check (auth.uid() = user_id or user_id is null);
+  with check (auth.uid() = user_id);
 
 create policy "Users can update their own analyses"
   on public.analyses for update
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 
 create policy "Users can delete their own analyses"
   on public.analyses for delete
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id);
 
 
 -- ----------------------------------------------------------------------------
@@ -316,19 +321,20 @@ drop policy if exists "Users can delete sequence versions" on public.sequence_ve
 
 create policy "Users can view sequence versions"
   on public.sequence_versions for select
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id);
 
 create policy "Users can insert sequence versions"
   on public.sequence_versions for insert
-  with check (auth.uid() = user_id or user_id is null);
+  with check (auth.uid() = user_id);
 
 create policy "Users can update sequence versions"
   on public.sequence_versions for update
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 
 create policy "Users can delete sequence versions"
   on public.sequence_versions for delete
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id);
 
 
 -- ----------------------------------------------------------------------------
@@ -355,17 +361,17 @@ export const SqlMigrationModal: React.FC<SqlMigrationModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="w-full max-w-3xl bg-white border border-[#E2E8F0] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
+      <div className="w-full max-w-3xl bg-white border border-[#E2E8F0] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92dvh]">
         {/* Header */}
-        <div className="p-5 border-b border-[#E2E8F0] flex items-center justify-between bg-[#F8FAFC]">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-[rgba(56,189,248,0.12)] border border-[#38BDF8]/30 text-[#0284C7]">
+        <div className="p-4 sm:p-5 border-b border-[#E2E8F0] flex items-center justify-between gap-2 bg-[#F8FAFC] shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="p-2 rounded-xl bg-[rgba(56,189,248,0.12)] border border-[#38BDF8]/30 text-[#0284C7] shrink-0">
               <Database className="w-5 h-5" />
             </div>
-            <div>
-              <h3 className="text-sm font-bold text-[#0F172A] tracking-tight flex items-center gap-2">
-                Supabase SQL Migration Script
+            <div className="min-w-0">
+              <h3 className="text-sm font-bold text-[#0F172A] tracking-tight flex flex-wrap items-center gap-2">
+                <span>Supabase SQL Migration Script</span>
                 <span className="text-[10px] bg-[rgba(56,189,248,0.12)] text-[#0284C7] border border-[#38BDF8]/30 px-2 py-0.5 rounded font-mono">
                   Schema v2.0
                 </span>
@@ -378,7 +384,7 @@ export const SqlMigrationModal: React.FC<SqlMigrationModalProps> = ({
 
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-[#F1F5F9] text-[#64748B] hover:text-[#0F172A] transition-colors cursor-pointer"
+            className="p-1.5 rounded-lg hover:bg-[#F1F5F9] text-[#64748B] hover:text-[#0F172A] transition-colors cursor-pointer shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
@@ -417,22 +423,22 @@ export const SqlMigrationModal: React.FC<SqlMigrationModalProps> = ({
         </div>
 
         {/* Footer Actions */}
-        <div className="p-4 border-t border-[#E2E8F0] bg-[#F8FAFC] flex items-center justify-between">
+        <div className="p-3.5 sm:p-4 border-t border-[#E2E8F0] bg-[#F8FAFC] flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-2 text-xs text-[#64748B] font-mono">
-            <Terminal className="w-4 h-4 text-[#0284C7]" />
+            <Terminal className="w-4 h-4 text-[#0284C7] shrink-0" />
             <span>Includes RLS policies, indexing & PostgREST notify</span>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col-reverse sm:flex-row sm:items-center gap-2.5 sm:gap-3">
             <button
               onClick={onClose}
-              className="px-4 py-2 rounded-xl bg-white hover:bg-[#F1F5F9] border border-[#E2E8F0] text-[#334155] text-xs font-semibold transition-colors cursor-pointer shadow-2xs"
+              className="w-full sm:w-auto justify-center px-4 py-2 rounded-xl bg-white hover:bg-[#F1F5F9] border border-[#E2E8F0] text-[#334155] text-xs font-semibold transition-colors cursor-pointer shadow-2xs"
             >
               Close
             </button>
             <button
               onClick={handleCopy}
-              className="flex items-center gap-2 px-5 py-2 rounded-xl bg-[#0284C7] hover:bg-[#0369A1] text-white text-xs font-semibold transition-all shadow-xs cursor-pointer"
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2 rounded-xl bg-[#0284C7] hover:bg-[#0369A1] text-white text-xs font-semibold transition-all shadow-xs cursor-pointer"
             >
               {copied ? (
                 <>

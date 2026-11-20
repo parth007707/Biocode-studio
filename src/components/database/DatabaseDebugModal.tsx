@@ -50,9 +50,8 @@ export const DatabaseDebugModal: React.FC<DatabaseDebugModalProps> = ({ isOpen, 
       const h = await bioService.checkSchemaHealth();
       setHealth(h);
 
-      const queueRaw = localStorage.getItem('pending_analysis_queue');
-      const queue = queueRaw ? JSON.parse(queueRaw) : [];
-      setPendingQueueCount(queue.length);
+      const count = await bioService.getPendingRecoveryQueueCount();
+      setPendingQueueCount(count);
     } catch {}
   };
 
@@ -82,8 +81,8 @@ export const DatabaseDebugModal: React.FC<DatabaseDebugModalProps> = ({ isOpen, 
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white border border-[#BBF7D0] w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden text-[#334155] font-mono text-xs">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-white border border-[#BBF7D0] w-full max-w-4xl max-h-[92dvh] rounded-2xl shadow-2xl flex flex-col overflow-hidden text-[#334155] font-mono text-xs">
         {/* Header */}
         <div className="p-4 bg-[#F0FDF4] border-b border-[#BBF7D0] flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -160,7 +159,7 @@ export const DatabaseDebugModal: React.FC<DatabaseDebugModalProps> = ({ isOpen, 
 
         {/* Filter Controls */}
         <div className="p-3 bg-white border-b border-[#E2E8F0] flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             {(['ALL', 'SAVE', 'HEALTH', 'SYNC'] as const).map((mode) => (
               <button
                 key={mode}
@@ -299,7 +298,7 @@ export const DatabaseDebugModal: React.FC<DatabaseDebugModalProps> = ({ isOpen, 
         </div>
 
         {/* Footer */}
-        <div className="p-3 bg-[#F8FAFC] border-t border-[#E2E8F0] flex items-center justify-between text-[11px] text-[#64748B]">
+        <div className="p-3 bg-[#F8FAFC] border-t border-[#E2E8F0] flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#64748B]">
           <span>BioCode Studio Secure Logger • Zero credentials exposed</span>
           <button
             type="button"

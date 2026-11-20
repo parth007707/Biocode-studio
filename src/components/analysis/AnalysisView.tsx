@@ -8,7 +8,6 @@ import { useBioSequence } from '../../context/BioSequenceContext';
 
 interface AnalysisViewProps {
   user: any;
-  onOpenAuth: () => void;
   initialWorkbenchData?: {
     sequence: string;
     metadata?: any;
@@ -20,7 +19,7 @@ interface AnalysisViewProps {
   onOpenAiWithContext?: (context: any) => void;
 }
 
-export const AnalysisView: React.FC<AnalysisViewProps> = ({ user, onOpenAuth, initialWorkbenchData, onOpenAiWithContext }) => {
+export const AnalysisView: React.FC<AnalysisViewProps> = ({ user, initialWorkbenchData, onOpenAiWithContext }) => {
   const { 
     clearActiveSequence, 
     sequenceType: centralSequenceType, 
@@ -132,47 +131,48 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ user, onOpenAuth, in
   };
 
   return (
-    <div className="h-full flex flex-col min-h-0 bg-[#F8FAFC]">
+    <div className="min-h-full lg:h-full flex flex-col min-h-0 bg-[#F8FAFC]">
       {/* Top Mode Switcher Bar */}
-      <div className="h-12 border-b border-[#E2E8F0] bg-white px-6 flex items-center justify-between shrink-0 select-none">
-        <div className="flex items-center gap-2">
+      <div className="min-h-12 border-b border-[#E2E8F0] bg-white px-3 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-2 shrink-0 select-none">
+        <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap min-w-0">
           <button
             type="button"
             onClick={() => setViewMode('explorer')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-2 cursor-pointer ${
+            className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 sm:gap-2 cursor-pointer ${
               viewMode === 'explorer'
                 ? 'bg-[rgba(56,189,248,0.12)] text-[#0284C7] border border-[#38BDF8]/30 font-semibold shadow-xs'
                 : 'text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] border border-transparent'
             }`}
           >
-            <Database className="w-3.5 h-3.5" />
-            <span>Biological Data Explorer</span>
+            <Database className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">Biological Data Explorer</span>
           </button>
 
           {hasActiveTarget && (
             <>
-              <span className="text-[#CBD5E1]">/</span>
+              <span className="text-[#CBD5E1] hidden sm:inline">/</span>
 
-              <div className="inline-flex items-center">
+              <div className="inline-flex items-center max-w-full">
                 <button
                   type="button"
                   onClick={() => setViewMode('workbench')}
-                  className={`px-3 py-1.5 rounded-l-lg text-xs font-medium transition-all flex items-center gap-2 cursor-pointer ${
+                  className={`px-2.5 sm:px-3 py-1.5 rounded-l-lg text-xs font-medium transition-all flex items-center gap-1.5 sm:gap-2 cursor-pointer ${
                     viewMode === 'workbench'
                       ? 'bg-[rgba(56,189,248,0.12)] text-[#0284C7] border border-[#38BDF8]/30 border-r-0 font-semibold shadow-xs'
                       : 'text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] border border-transparent'
                   }`}
                 >
-                  <Dna className="w-3.5 h-3.5" />
-                  <span>Sequence Analysis Workbench</span>
+                  <Dna className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">Sequence Analysis Workbench</span>
                   {activeSequence && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#0284C7] animate-pulse" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#0284C7] animate-pulse shrink-0" />
                   )}
                 </button>
                 <button
                   type="button"
                   onClick={handleCloseWorkspace}
                   title="Close Workspace / Clear Active Target"
+                  aria-label="Close Workspace / Clear Active Target"
                   className={`px-2 py-1.5 rounded-r-lg text-xs transition-all flex items-center justify-center cursor-pointer ${
                     viewMode === 'workbench'
                       ? 'bg-[rgba(56,189,248,0.12)] text-[#64748B] hover:text-rose-600 hover:bg-rose-50 border border-[#38BDF8]/30 border-l-0'
@@ -186,34 +186,34 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ user, onOpenAuth, in
           )}
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2 flex-wrap min-w-0">
           {sequenceValidation && !sequenceValidation.isValid && viewMode === 'workbench' && (
             <span className="text-[11px] font-mono text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200 font-semibold flex items-center gap-1 shadow-2xs">
-              <ShieldAlert className="w-3 h-3 text-rose-600" />
+              <ShieldAlert className="w-3 h-3 text-rose-600 shrink-0" />
               <span>{sequenceValidation.totalInvalidCount} invalid character(s) flagged</span>
             </span>
           )}
 
           {sequenceValidation && sequenceValidation.isValid && viewMode === 'workbench' && activeSequence && (
             <span className="text-[11px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 font-semibold flex items-center gap-1 shadow-2xs">
-              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+              <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
               <span>{sequenceValidation.targetType} Validated</span>
             </span>
           )}
 
           {sourceIdentifier && viewMode === 'workbench' && (
-            <span className="text-[11px] font-mono text-[#0284C7] bg-[rgba(56,189,248,0.12)] px-2 py-0.5 rounded border border-[#38BDF8]/30 truncate max-w-xs font-semibold">
+            <span className="text-[11px] font-mono text-[#0284C7] bg-[rgba(56,189,248,0.12)] px-2 py-0.5 rounded border border-[#38BDF8]/30 truncate max-w-[180px] sm:max-w-xs font-semibold">
               Loaded: {sourceIdentifier}
             </span>
           )}
-          <span className="text-[11px] font-mono text-[#94A3B8] hidden sm:inline-block">
+          <span className="text-[11px] font-mono text-[#94A3B8] hidden lg:inline-block">
             BioCode Studio Intelligence Router
           </span>
         </div>
       </div>
 
       {/* Main View Area */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 min-h-0 lg:overflow-hidden">
         {viewMode === 'explorer' || !hasActiveTarget ? (
           <BiologicalDataExplorer
             onOpenWorkbench={(seq, meta) => handleOpenWorkbench(seq, meta)}

@@ -4,6 +4,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { RotateCcw, Play, Pause, ZoomIn, ZoomOut, Check, RefreshCw, Crosshair, Box, Layers, AlertTriangle } from 'lucide-react';
 import { SequenceType } from '../../lib/bio/types';
 import { SequenceMutation } from '../../lib/bio/editor/types';
+import { parseBiologicalInput } from '../../lib/bio/sequenceParser';
 import { ViewerRepresentation, ViewerColorScheme } from './types';
 import { resolveMacromolecularStructure, computeClientSequenceHash } from '../../lib/bio/structure3d/structureResolver';
 import { ResolvedStructure3D, AtomicCoordinate, Residue3D } from '../../lib/bio/structure3d/types';
@@ -26,6 +27,7 @@ const isSoftwareGl = (() => {
 
 export interface Sequence3DViewerProps {
   sequence: string;
+  originalSequence?: string;
   sequenceType?: SequenceType | string;
   accession?: string;
   mutations?: SequenceMutation[];
@@ -60,6 +62,7 @@ const SECONDARY_COLORS: Record<string, number> = {
 
 export const Sequence3DViewer: React.FC<Sequence3DViewerProps> = ({
   sequence,
+  originalSequence,
   sequenceType = 'PROTEIN',
   accession = 'Sequence',
   mutations = [],
@@ -94,7 +97,15 @@ export const Sequence3DViewer: React.FC<Sequence3DViewerProps> = ({
   const raycasterRef = useRef(new THREE.Raycaster());
   const mousePosRef = useRef(new THREE.Vector2());
 
-  const cleanSeq = useMemo(() => sequence.toUpperCase().replace(/[^A-Z]/g, ''), [sequence]);
+  const autoRotateRef = useRef<boolean>(autoRotate);
+  autoRotateRef.current = autoRotate;
+  const onSelectResidueRef = useRef(onSelectResidue);
+  onSelectResidueRef.current = onSelectResidue;
+  const lastFittedStructureRef = useRef<ResolvedStructure3D | null>(null);
+  const [webglError, setWebglError] = useState<string | null>(null);
+
+  const parsedInput = useMemo(() => parseBiologicalInput(sequence), [sequence]);
+  const cleanSeq = useMemo(() => parsedInput.sequence.replace(/[^A-Z]/g, ''), [parsedInput]);
   const normSeqType: SequenceType = String(sequenceType).toUpperCase().includes('PROT')
     ? 'PROTEIN'
     : String(sequenceType).toUpperCase().includes('RNA')
@@ -116,7 +127,8 @@ export const Sequence3DViewer: React.FC<Sequence3DViewerProps> = ({
     const timer = setTimeout(async () => {
       try {
         const resolved = await resolveMacromolecularStructure({
-          sequence: cleanSeq,
+          sequence: parsedInput.header ? `>${parsedInput.header}\n${cleanSeq}` : cleanSeq,
+          originalSequence,
           sequenceType: normSeqType,
           accessionOrPdbId: accession,
           mutations,
@@ -142,7 +154,7 @@ export const Sequence3DViewer: React.FC<Sequence3DViewerProps> = ({
       isCancelled = true;
       clearTimeout(timer);
     };
-  }, [cleanSeq, normSeqType, accession, mutations, title]);
+  }, [cleanSeq, parsedInput.header, originalSequence, normSeqType, accession, mutations, title]);
 
   // Helper: add bond cylinder
   const addBondCylinder = (
@@ -171,26 +183,38 @@ export const Sequence3DViewer: React.FC<Sequence3DViewerProps> = ({
     group.add(mesh);
   };
 
-  // Build Real Macromolecular 3D Geometry
-  const buildGeometry = useCallback(() => {
-    if (!sceneRef.current || !modelGroupRef.current || !structure) return;
-    const rootGroup = modelGroupRef.current;
+  const clearGroupResources = useCallback((rootGroup: THREE.Group) => {
+    const geometries = new Set<THREE.BufferGeometry>();
+    const materials = new Set<THREE.Material>();
 
-    // Clear previous geometry
     while (rootGroup.children.length > 0) {
       const obj = rootGroup.children[0];
       rootGroup.remove(obj);
-      if ((obj as any).geometry) (obj as any).geometry.dispose();
-      if ((obj as any).material) {
-        if (Array.isArray((obj as any).material)) {
-          (obj as any).material.forEach((m: THREE.Material) => m.dispose());
-        } else {
-          (obj as any).material.dispose();
+      obj.traverse((child) => {
+        const mesh = child as THREE.Mesh;
+        if (mesh.geometry) geometries.add(mesh.geometry);
+        if (mesh.material) {
+          if (Array.isArray(mesh.material)) {
+            mesh.material.forEach((m) => materials.add(m));
+          } else {
+            materials.add(mesh.material);
+          }
         }
-      }
+      });
     }
 
-    if (!structure.allAtoms || structure.allAtoms.length === 0) return;
+    geometries.forEach((g) => g.dispose());
+    materials.forEach((m) => m.dispose());
+  }, []);
+
+  // Build Real Macromolecular 3D Geometry
+  const buildGeometry = useCallback(() => {
+    if (!sceneRef.current || !modelGroupRef.current) return;
+    const rootGroup = modelGroupRef.current;
+
+    clearGroupResources(rootGroup);
+
+    if (!structure || !structure.allAtoms || structure.allAtoms.length === 0) return;
 
     const center = structure.boundingBox.center;
     const chains = structure.chains || [];
@@ -387,23 +411,40 @@ export const Sequence3DViewer: React.FC<Sequence3DViewerProps> = ({
       }
     }
 
-    // Adjust Camera to fit Bounding Box
-    if (cameraRef.current && mountRef.current) {
+    // Fit camera to bounding box whenever a new structure arrives
+    if (cameraRef.current && lastFittedStructureRef.current !== structure) {
+      lastFittedStructureRef.current = structure;
       const radius = Math.max(structure.boundingBox.radius, 15);
       const fov = cameraRef.current.fov * (Math.PI / 180);
       const targetDist = radius / Math.tan(fov / 2) * 1.35;
       cameraRef.current.position.set(0, 0, Math.max(targetDist, 25));
       cameraRef.current.lookAt(0, 0, 0);
     }
-  }, [structure, representation, controlledSelectedResSeq, selectedAtom]);
+  }, [structure, representation, controlledSelectedResSeq, selectedAtom, clearGroupResources]);
 
-  // Setup Three.js WebGL Scene with Dark Scientific Canvas
+  const buildGeometryRef = useRef(buildGeometry);
+  buildGeometryRef.current = buildGeometry;
+
+  // Setup Three.js WebGL Scene ONCE on mount inside an isolated empty host div
   useEffect(() => {
     const container = mountRef.current;
     if (!container) return;
 
     const width = container.clientWidth || 400;
     const heightPx = container.clientHeight || 300;
+
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({
+        antialias: !isSoftwareGl,
+        alpha: true,
+        powerPreference: 'high-performance',
+        preserveDrawingBuffer: true
+      });
+    } catch (err: any) {
+      setWebglError(err?.message || 'WebGL initialization failed.');
+      return;
+    }
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x070d18); // Dark scientific visualization canvas
@@ -413,12 +454,6 @@ export const Sequence3DViewer: React.FC<Sequence3DViewerProps> = ({
     camera.position.set(0, 0, 60);
     cameraRef.current = camera;
 
-    const renderer = new THREE.WebGLRenderer({
-      antialias: !isSoftwareGl,
-      alpha: true,
-      powerPreference: 'high-performance',
-      preserveDrawingBuffer: true
-    });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.1;
@@ -427,17 +462,26 @@ export const Sequence3DViewer: React.FC<Sequence3DViewerProps> = ({
     renderer.shadowMap.enabled = !isSoftwareGl;
     rendererRef.current = renderer;
 
-    while (container.firstChild) {
-      container.removeChild(container.firstChild);
+    renderer.domElement.style.display = 'block';
+    renderer.domElement.style.width = '100%';
+    renderer.domElement.style.height = '100%';
+    renderer.domElement.style.touchAction = 'none';
+    if (renderer.domElement.parentNode !== container) {
+      container.appendChild(renderer.domElement);
     }
-    container.appendChild(renderer.domElement);
 
-    // Studio Environment Reflection via RoomEnvironment
-    try {
-      const pmrem = new THREE.PMREMGenerator(renderer);
-      scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-      pmrem.dispose();
-    } catch {}
+    // Studio Environment Reflection via RoomEnvironment (skipped under software WebGL to avoid CPU stall)
+    let envTarget: THREE.WebGLRenderTarget | null = null;
+    if (!isSoftwareGl) {
+      try {
+        const pmrem = new THREE.PMREMGenerator(renderer);
+        const roomEnv = new RoomEnvironment();
+        envTarget = pmrem.fromScene(roomEnv, 0.04);
+        scene.environment = envTarget.texture;
+        roomEnv.dispose();
+        pmrem.dispose();
+      } catch {}
+    }
 
     // Scientific 3D Lighting
     const ambientLight = new THREE.AmbientLight(0xffffff, 1.1);
@@ -456,13 +500,13 @@ export const Sequence3DViewer: React.FC<Sequence3DViewerProps> = ({
     modelGroupRef.current = group;
     scene.add(group);
 
-    buildGeometry();
+    buildGeometryRef.current();
 
     // Render loop
     const animate = () => {
       animFrameIdRef.current = requestAnimationFrame(animate);
 
-      if (autoRotate && modelGroupRef.current && !isDraggingRef.current) {
+      if (autoRotateRef.current && modelGroupRef.current && !isDraggingRef.current) {
         modelGroupRef.current.rotation.y += 0.005;
       }
 
@@ -500,6 +544,7 @@ export const Sequence3DViewer: React.FC<Sequence3DViewerProps> = ({
     const onClick = (e: MouseEvent) => {
       if (!container || !cameraRef.current || !modelGroupRef.current) return;
       const rect = container.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
       mousePosRef.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       mousePosRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
@@ -511,45 +556,118 @@ export const Sequence3DViewer: React.FC<Sequence3DViewerProps> = ({
         const atom = (hit.userData?.atom || res?.atoms[0]) as AtomicCoordinate | undefined;
         if (res && atom) {
           setSelectedAtom({ atom, residue: res });
-          onSelectResidue?.(res.resSeq, res.code1);
+          onSelectResidueRef.current?.(res.resSeq, res.code1);
         }
       }
     };
 
     const domElement = renderer.domElement;
+    let pinchDistance = 0;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        isDraggingRef.current = true;
+        prevMouseRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      } else if (e.touches.length === 2) {
+        isDraggingRef.current = false;
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        pinchDistance = Math.hypot(dx, dy);
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 1 && isDraggingRef.current && modelGroupRef.current) {
+        e.preventDefault();
+        const deltaX = e.touches[0].clientX - prevMouseRef.current.x;
+        const deltaY = e.touches[0].clientY - prevMouseRef.current.y;
+        prevMouseRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        modelGroupRef.current.rotation.y += deltaX * 0.01;
+        modelGroupRef.current.rotation.x += deltaY * 0.01;
+      } else if (e.touches.length === 2 && cameraRef.current) {
+        e.preventDefault();
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const dist = Math.hypot(dx, dy);
+        if (pinchDistance > 0) {
+          const delta = pinchDistance - dist;
+          cameraRef.current.position.z = Math.max(8, Math.min(250, cameraRef.current.position.z + delta * 0.15));
+        }
+        pinchDistance = dist;
+      }
+    };
+
+    const onTouchEnd = () => {
+      isDraggingRef.current = false;
+      pinchDistance = 0;
+    };
+
     domElement.addEventListener('mousedown', onMouseDown);
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
     domElement.addEventListener('wheel', onWheel, { passive: false });
     domElement.addEventListener('click', onClick);
+    domElement.addEventListener('touchstart', onTouchStart, { passive: true });
+    domElement.addEventListener('touchmove', onTouchMove, { passive: false });
+    domElement.addEventListener('touchend', onTouchEnd);
 
+    let resizeRaf: number | null = null;
+    let lastW = width;
+    let lastH = heightPx;
     const resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        const { width: w, height: h } = entry.contentRect;
-        if (w > 0 && h > 0 && rendererRef.current && cameraRef.current) {
-          cameraRef.current.aspect = w / h;
-          cameraRef.current.updateProjectionMatrix();
-          rendererRef.current.setSize(w, h, true);
+        const w = Math.floor(entry.contentRect.width);
+        const h = Math.floor(entry.contentRect.height);
+        if (w > 0 && h > 0 && (w !== lastW || h !== lastH)) {
+          lastW = w;
+          lastH = h;
+          if (resizeRaf) cancelAnimationFrame(resizeRaf);
+          resizeRaf = requestAnimationFrame(() => {
+            if (rendererRef.current && cameraRef.current) {
+              cameraRef.current.aspect = w / h;
+              cameraRef.current.updateProjectionMatrix();
+              rendererRef.current.setSize(w, h, false);
+            }
+          });
         }
       }
     });
     resizeObserver.observe(container);
 
     return () => {
-      if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
+      if (animFrameIdRef.current) {
+        cancelAnimationFrame(animFrameIdRef.current);
+        animFrameIdRef.current = null;
+      }
+      if (resizeRaf) cancelAnimationFrame(resizeRaf);
       resizeObserver.disconnect();
       domElement.removeEventListener('mousedown', onMouseDown);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
       domElement.removeEventListener('wheel', onWheel);
       domElement.removeEventListener('click', onClick);
-      if (scene.environment) scene.environment.dispose();
-      renderer.dispose();
-      while (container.firstChild) {
-        container.removeChild(container.firstChild);
+      domElement.removeEventListener('touchstart', onTouchStart);
+      domElement.removeEventListener('touchmove', onTouchMove);
+      domElement.removeEventListener('touchend', onTouchEnd);
+      if (modelGroupRef.current) {
+        clearGroupResources(modelGroupRef.current);
       }
+      envTarget?.dispose();
+      renderer.dispose();
+      if (domElement.parentNode === container) {
+        container.removeChild(domElement);
+      }
+      rendererRef.current = null;
+      sceneRef.current = null;
+      cameraRef.current = null;
+      modelGroupRef.current = null;
     };
-  }, [autoRotate, buildGeometry, onSelectResidue]);
+  }, [clearGroupResources]);
+
+  // Rebuild molecular geometry cleanly whenever structure or style changes
+  useEffect(() => {
+    buildGeometry();
+  }, [buildGeometry]);
 
   const handleResetCamera = () => {
     if (cameraRef.current && modelGroupRef.current && structure) {
@@ -568,14 +686,16 @@ export const Sequence3DViewer: React.FC<Sequence3DViewerProps> = ({
     }
   };
 
+  const isStructureUnavailable = !isLoading && (!structure || structure.structureType === 'UNAVAILABLE' || (structure.allAtoms?.length ?? 0) === 0);
+
   const provenanceBadge = structure
     ? structure.structureType === 'EXPERIMENTAL'
       ? { label: `PDB: ${structure.sourceId || 'RCSB'} (${structure.resolutionText || 'Experimental'})`, color: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' }
       : structure.structureType === 'PREDICTED'
-      ? { label: `PREDICTED: ${structure.sourceName || 'Homology Model'}`, color: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30' }
+      ? { label: `PREDICTED: ${structure.sourceId || structure.sourceName || 'AlphaFold / ESMFold'}`, color: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30' }
       : structure.structureType === 'PARTIAL'
-      ? { label: `PARTIAL: ${structure.coverageInfo?.coveragePercent || 0}%`, color: 'bg-amber-500/20 text-amber-300 border-amber-500/30' }
-      : { label: `MODEL: Sequence-Derived`, color: 'bg-sky-500/20 text-sky-300 border-sky-500/30' }
+      ? { label: `PARTIAL: ${structure.sourceId || 'RCSB'} (${structure.coverageInfo?.coveragePercent || 0}%)`, color: 'bg-amber-500/20 text-amber-300 border-amber-500/30' }
+      : { label: 'UNAVAILABLE', color: 'bg-slate-700/60 text-slate-300 border-slate-600' }
     : null;
 
   return (
@@ -599,30 +719,60 @@ export const Sequence3DViewer: React.FC<Sequence3DViewerProps> = ({
               {provenanceBadge.label}
             </span>
           )}
-          <span className="px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-            <Check className="w-3 h-3 text-emerald-400" />
-            <span>Synced</span>
-          </span>
+          {isLoading ? (
+            <span className="px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 bg-sky-500/20 text-sky-300 border border-sky-500/30">
+              <RefreshCw className="w-3 h-3 animate-spin text-sky-400" />
+              <span>Resolving</span>
+            </span>
+          ) : isStructureUnavailable ? (
+            <span className="px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 bg-amber-500/20 text-amber-300 border border-amber-500/30">
+              <AlertTriangle className="w-3 h-3 text-amber-400" />
+              <span>Unavailable</span>
+            </span>
+          ) : (
+            <span className="px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+              <Check className="w-3 h-3 text-emerald-400" />
+              <span>Verified</span>
+            </span>
+          )}
         </div>
       </div>
 
-      {/* WebGL Canvas Viewport */}
-      <div 
-        ref={mountRef} 
+      {/* WebGL Canvas Viewport: isolated empty host div + sibling loading/error/unavailable overlays */}
+      <div
         style={{ height }}
-        className="w-full flex-1 min-h-[260px] relative cursor-grab active:cursor-grabbing select-none"
+        className="w-full flex-1 min-h-[260px] relative select-none"
       >
+        <div
+          ref={mountRef}
+          className="w-full h-full cursor-grab active:cursor-grabbing"
+        />
         {isLoading && (
-          <div className="absolute inset-0 bg-[#070d18]/80 backdrop-blur-xs flex flex-col items-center justify-center space-y-2 z-20 text-sky-400 font-mono text-xs">
+          <div className="absolute inset-0 bg-[#070d18]/80 flex flex-col items-center justify-center space-y-2 z-20 text-sky-400 font-mono text-xs pointer-events-none">
             <RefreshCw className="w-6 h-6 animate-spin text-sky-400" />
             <span>{loadingPhase}</span>
+          </div>
+        )}
+        {isStructureUnavailable && !webglError && (
+          <div className="absolute inset-0 bg-[#070d18]/92 flex flex-col items-center justify-center p-5 text-center z-20 text-slate-300 font-mono text-xs space-y-2">
+            <AlertTriangle className="w-6 h-6 text-amber-400" />
+            <p className="font-bold text-white">No Verified 3D Structure Available</p>
+            <p className="text-[11px] text-slate-400 max-w-xs leading-relaxed">
+              {structure?.confidenceInfo?.description || 'No matching experimental RCSB PDB or AlphaFold DB coordinates were found for this sequence.'}
+            </p>
+          </div>
+        )}
+        {webglError && (
+          <div className="absolute inset-0 bg-[#070d18] flex flex-col items-center justify-center p-4 text-center z-20 text-slate-300 font-mono text-xs">
+            <AlertTriangle className="w-5 h-5 text-amber-400 mb-1.5" />
+            <span>{webglError}</span>
           </div>
         )}
       </div>
 
       {/* Floating Selected Atom / Residue Inspector Pill */}
       {selectedAtom && (
-        <div className="absolute top-12 left-3 bg-[#0b1528]/95 border border-sky-500/50 rounded-xl p-2.5 text-xs font-mono text-white shadow-2xl backdrop-blur-md z-20 space-y-1 max-w-xs">
+        <div className="absolute top-12 left-2.5 sm:left-3 bg-[#0b1528]/95 border border-sky-500/50 rounded-xl p-2.5 text-xs font-mono text-white shadow-2xl backdrop-blur-md z-20 space-y-1 max-w-[calc(100%-1.25rem)] sm:max-w-xs">
           <div className="flex items-center justify-between gap-2 border-b border-slate-700 pb-1">
             <span className="text-sky-400 font-bold">Atom {selectedAtom.atom.name}</span>
             <span className="text-[10px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-300">Chain {selectedAtom.atom.chainId}</span>
@@ -630,7 +780,7 @@ export const Sequence3DViewer: React.FC<Sequence3DViewerProps> = ({
           <div className="text-[11px] text-slate-300">
             Residue: <strong className="text-white">{selectedAtom.residue.name} {selectedAtom.residue.resSeq}</strong> ({selectedAtom.residue.code1})
           </div>
-          <div className="text-[10px] text-slate-400">
+          <div className="text-[10px] text-slate-400 truncate">
             Coordinates: x={selectedAtom.atom.x.toFixed(2)}, y={selectedAtom.atom.y.toFixed(2)}, z={selectedAtom.atom.z.toFixed(2)}
           </div>
           {selectedAtom.residue.isMutated && (
@@ -643,9 +793,9 @@ export const Sequence3DViewer: React.FC<Sequence3DViewerProps> = ({
 
       {/* Bottom Floating Control Bar */}
       {showControls && (
-        <div className="absolute bottom-2.5 left-2.5 right-2.5 flex items-center justify-between gap-2 p-1.5 rounded-xl bg-[#0b1528]/85 backdrop-blur-md border border-[#1e293b] text-xs font-mono z-10 flex-wrap">
+        <div className="sm:absolute sm:bottom-2.5 sm:left-2.5 sm:right-2.5 flex items-center justify-between gap-2 p-1.5 sm:rounded-xl bg-[#0b1528]/90 backdrop-blur-md border-t sm:border border-[#1e293b] text-xs font-mono z-10 flex-wrap">
           {/* Representation Selector */}
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 flex-wrap">
             {(['ball_stick', 'ribbon', 'backbone', 'space_fill'] as ViewerRepresentation[]).map((mode) => (
               <button
                 key={mode}

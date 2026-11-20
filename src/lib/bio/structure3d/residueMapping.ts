@@ -19,14 +19,27 @@ export function buildSequenceToStructureMapping(
 
   if (!cleanSeq) return mapping;
 
-  // Build lookup index from structure by resSeq (PDB residue number)
-  // Give priority to primary target chain if designated in coverageInfo
-  const resSeqMap = new Map<number, { res: Residue3D; chainId: string }>();
+  const preferredChainId = structure?.matchedChainId || structure?.coverageInfo?.chain;
+  const targetToChainResSeq = structure?.coverageInfo?.targetToChainResSeq;
 
+  // Build per-chain residue index lookup
+  const chainResLookup = new Map<string, Map<number, Residue3D>>();
   if (structure?.chains && structure.chains.length > 0) {
-    const preferredChainId = structure.coverageInfo?.chain;
-    
-    // Sort chains so preferred chain comes last (will overwrite others in lookup)
+    for (const chain of structure.chains) {
+      if (chain.type === 'LIGAND' || chain.type === 'WATER') continue;
+      const map = new Map<number, Residue3D>();
+      for (const res of chain.residues) {
+        if (typeof res.resSeq === 'number' && Number.isFinite(res.resSeq)) {
+          map.set(res.resSeq, res);
+        }
+      }
+      chainResLookup.set(chain.id, map);
+    }
+  }
+
+  // Fallback global map weighted to preferredChainId if no alignment map is provided
+  const resSeqMap = new Map<number, { res: Residue3D; chainId: string }>();
+  if (structure?.chains && structure.chains.length > 0) {
     const sortedChains = [...structure.chains].sort((a, b) => {
       if (a.id === preferredChainId) return 1;
       if (b.id === preferredChainId) return -1;
@@ -36,7 +49,7 @@ export function buildSequenceToStructureMapping(
     for (const chain of sortedChains) {
       if (chain.type === 'LIGAND' || chain.type === 'WATER') continue;
       for (const res of chain.residues) {
-        if (typeof res.resSeq === 'number' && !isNaN(res.resSeq)) {
+        if (typeof res.resSeq === 'number' && Number.isFinite(res.resSeq)) {
           resSeqMap.set(res.resSeq, { res, chainId: chain.id });
         }
       }
@@ -45,7 +58,24 @@ export function buildSequenceToStructureMapping(
 
   for (let pos = 1; pos <= cleanSeq.length; pos++) {
     const seqAa = cleanSeq[pos - 1] || 'X';
-    const hit = resSeqMap.get(pos);
+    let hit: { res: Residue3D; chainId: string } | undefined;
+
+    if (targetToChainResSeq && preferredChainId) {
+      const mappedResSeq = targetToChainResSeq[pos];
+      if (typeof mappedResSeq === 'number') {
+        const res = chainResLookup.get(preferredChainId)?.get(mappedResSeq);
+        if (res) {
+          hit = { res, chainId: preferredChainId };
+        }
+      }
+    } else if (preferredChainId && chainResLookup.has(preferredChainId)) {
+      const res = chainResLookup.get(preferredChainId)!.get(pos);
+      if (res) {
+        hit = { res, chainId: preferredChainId };
+      }
+    } else {
+      hit = resSeqMap.get(pos);
+    }
 
     if (hit) {
       mapping.push({

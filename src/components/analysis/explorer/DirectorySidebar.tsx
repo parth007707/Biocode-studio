@@ -20,7 +20,8 @@ import {
   Globe,
   Dna,
   PanelLeftClose,
-  PanelLeftOpen
+  PanelLeftOpen,
+  X
 } from 'lucide-react';
 
 interface DirectorySidebarProps {
@@ -32,6 +33,8 @@ interface DirectorySidebarProps {
   onOpenFastaImport: () => void;
   isCollapsed?: boolean;
   onToggleCollapse?: () => void;
+  isMobileOpen?: boolean;
+  onCloseMobile?: () => void;
 }
 
 export const DirectorySidebar: React.FC<DirectorySidebarProps> = ({
@@ -42,7 +45,9 @@ export const DirectorySidebar: React.FC<DirectorySidebarProps> = ({
   onOpenWorkbench,
   onOpenFastaImport,
   isCollapsed = false,
-  onToggleCollapse
+  onToggleCollapse,
+  isMobileOpen = false,
+  onCloseMobile
 }) => {
   // Strict progressive disclosure accordion: only ONE category is expanded at a time
   const [expandedCategory, setExpandedCategory] = useState<DatabaseCategory | null>(selectedCategory);
@@ -98,11 +103,11 @@ export const DirectorySidebar: React.FC<DirectorySidebarProps> = ({
     (c) => c.id !== 'FASTA_IMPORT' && c.id !== 'CUSTOM_SEQUENCE'
   );
 
-  if (isCollapsed) {
+  if (isCollapsed && !isMobileOpen) {
     return (
       <aside 
         id="directory-sidebar-collapsed"
-        className="w-14 bg-white border-r border-[#E2E8F0] flex flex-col h-full shrink-0 select-none transition-all duration-200 justify-between items-center py-3"
+        className="hidden md:flex w-14 bg-white border-r border-[#E2E8F0] flex-col h-full shrink-0 select-none transition-all duration-200 justify-between items-center py-3"
       >
         <div className="flex flex-col items-center space-y-3 w-full">
           {/* Expand toggle */}
@@ -181,36 +186,59 @@ export const DirectorySidebar: React.FC<DirectorySidebarProps> = ({
   }
 
   return (
-    <aside 
-      id="directory-sidebar"
-      className="w-64 bg-white border-r border-[#E2E8F0] flex flex-col h-full shrink-0 select-none transition-all duration-200"
-    >
-      {/* Sidebar Header with Collapse Button */}
-      <div className="px-3.5 py-3 border-b border-[#E2E8F0] bg-[#F8FAFC] flex items-center justify-between">
-        <div className="flex items-center gap-2 min-w-0">
-          <Globe className="w-4 h-4 text-[#0284C7] shrink-0" />
-          <h2 className="text-xs font-bold uppercase tracking-wider text-[#0F172A] truncate">
-            Data Sources
-          </h2>
-        </div>
+    <>
+      {isMobileOpen && (
+        <div
+          onClick={onCloseMobile}
+          aria-hidden="true"
+          className="fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-[1px] md:hidden"
+        />
+      )}
+      <aside 
+        id="directory-sidebar"
+        className={`${
+          isMobileOpen
+            ? 'fixed inset-y-0 left-0 z-50 flex w-64 shadow-2xl'
+            : 'hidden md:flex w-56 lg:w-64'
+        } bg-white border-r border-[#E2E8F0] flex-col h-full shrink-0 select-none transition-all duration-200`}
+      >
+        {/* Sidebar Header with Collapse Button */}
+        <div className="px-3.5 py-3 border-b border-[#E2E8F0] bg-[#F8FAFC] flex items-center justify-between">
+          <div className="flex items-center gap-2 min-w-0">
+            <Globe className="w-4 h-4 text-[#0284C7] shrink-0" />
+            <h2 className="text-xs font-bold uppercase tracking-wider text-[#0F172A] truncate">
+              Data Sources
+            </h2>
+          </div>
 
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] font-mono text-[#0284C7] bg-[rgba(56,189,248,0.12)] px-1.5 py-0.5 rounded border border-[#38BDF8]/30 font-semibold">
-            {DATABASE_SOURCES.filter(s => s.category !== 'FASTA_IMPORT' && s.category !== 'CUSTOM_SEQUENCE').length} Repos
-          </span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-mono text-[#0284C7] bg-[rgba(56,189,248,0.12)] px-1.5 py-0.5 rounded border border-[#38BDF8]/30 font-semibold">
+              {DATABASE_SOURCES.filter(s => s.category !== 'FASTA_IMPORT' && s.category !== 'CUSTOM_SEQUENCE').length} Repos
+            </span>
 
-          {onToggleCollapse && (
-            <button
-              type="button"
-              onClick={onToggleCollapse}
-              title="Collapse Data Sources Panel (◀)"
-              className="p-1 text-[#64748B] hover:text-[#0F172A] hover:bg-[#E2E8F0] rounded transition-colors cursor-pointer ml-1"
-            >
-              <PanelLeftClose className="w-3.5 h-3.5" />
-            </button>
-          )}
+            {isMobileOpen && onCloseMobile ? (
+              <button
+                type="button"
+                onClick={onCloseMobile}
+                aria-label="Close Data Sources Drawer"
+                className="md:hidden p-1 text-[#64748B] hover:text-[#0F172A] hover:bg-[#E2E8F0] rounded transition-colors cursor-pointer ml-1"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            ) : (
+              onToggleCollapse && (
+                <button
+                  type="button"
+                  onClick={onToggleCollapse}
+                  title="Collapse Data Sources Panel (◀)"
+                  className="hidden md:inline-flex p-1 text-[#64748B] hover:text-[#0F172A] hover:bg-[#E2E8F0] rounded transition-colors cursor-pointer ml-1"
+                >
+                  <PanelLeftClose className="w-3.5 h-3.5" />
+                </button>
+              )
+            )}
+          </div>
         </div>
-      </div>
 
       {/* Progressive Disclosure Accordion: Fits neatly without forcing vertical scroll */}
       <div className="flex-1 p-2.5 space-y-1.5 overflow-y-auto custom-scrollbar">
@@ -309,5 +337,6 @@ export const DirectorySidebar: React.FC<DirectorySidebarProps> = ({
         </button>
       </div>
     </aside>
+    </>
   );
 };

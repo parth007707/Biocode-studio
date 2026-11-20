@@ -28,28 +28,28 @@ export const GlobalSearchBar: React.FC<GlobalSearchBarProps> = ({
   ];
 
   return (
-    <div className="w-full bg-white border-b border-[#E2E8F0] p-4 space-y-3">
+    <div className="w-full bg-white border-b border-[#E2E8F0] p-3 sm:p-4 space-y-3">
       {/* Search Input Bar */}
-      <form onSubmit={onSearchSubmit} className="relative flex items-center gap-2">
-        <div className="relative flex-1">
+      <form onSubmit={onSearchSubmit} className="relative flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+        <div className="relative flex-1 min-w-0">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#0284C7]" />
           <input
             type="text"
             value={query}
             onChange={(e) => onQueryChange(e.target.value)}
             placeholder="Search databases, genes, organisms, accession IDs..."
-            className="w-full bg-[#F8FAFC] focus:bg-white border border-[#CBD5E1] rounded-lg pl-10 pr-24 py-2.5 text-sm text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#0284C7] focus:ring-1 focus:ring-[#38BDF8]/40 transition-all font-mono shadow-2xs"
+            className="w-full bg-[#F8FAFC] focus:bg-white border border-[#CBD5E1] rounded-lg pl-10 pr-10 sm:pr-24 py-2.5 text-sm text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#0284C7] focus:ring-1 focus:ring-[#38BDF8]/40 transition-all font-mono shadow-2xs"
           />
           {query && (
             <button
               type="button"
               onClick={() => onQueryChange('')}
-              className="absolute right-20 top-1/2 -translate-y-1/2 p-1 text-[#94A3B8] hover:text-[#0F172A]"
+              className="absolute right-3 sm:right-20 top-1/2 -translate-y-1/2 p-1 text-[#94A3B8] hover:text-[#0F172A]"
             >
               <X className="w-3.5 h-3.5" />
             </button>
           )}
-          <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[10px] font-mono text-[#64748B] bg-[#F1F5F9] px-2 py-0.5 rounded border border-[#E2E8F0]">
+          <span className="hidden sm:inline-block absolute right-3.5 top-1/2 -translate-y-1/2 text-[10px] font-mono text-[#64748B] bg-[#F1F5F9] px-2 py-0.5 rounded border border-[#E2E8F0]">
             Enter ↵
           </span>
         </div>
@@ -57,7 +57,7 @@ export const GlobalSearchBar: React.FC<GlobalSearchBarProps> = ({
         <button
           type="submit"
           disabled={isSearching || !query.trim()}
-          className="px-4 py-2.5 bg-[#0284C7] hover:bg-[#0369A1] disabled:opacity-50 text-white font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5 shrink-0 shadow-xs cursor-pointer"
+          className="px-4 py-2.5 bg-[#0284C7] hover:bg-[#0369A1] disabled:opacity-50 text-white font-semibold text-xs rounded-lg transition-all flex items-center justify-center gap-1.5 shrink-0 shadow-xs cursor-pointer"
         >
           {isSearching ? (
             <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />

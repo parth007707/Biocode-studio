@@ -89,8 +89,8 @@ export const StructureStudioModal: React.FC<StructureStudioModalProps> = ({
         if (!isMounted) return;
         setStructure(resolved);
 
-        // If an original sequence exists and differs, generate original structure and compute RMSD
-        if (originalSequence && originalSequence !== sequence) {
+        // If an original sequence exists and differs, resolve original structure and compute RMSD when coordinates exist
+        if (originalSequence && originalSequence !== sequence && resolved.structureType !== 'UNAVAILABLE' && resolved.allAtoms.length > 0) {
           const resolvedOrig = await resolveMacromolecularStructure({
             sequence: originalSequence,
             sequenceType,
@@ -100,8 +100,15 @@ export const StructureStudioModal: React.FC<StructureStudioModalProps> = ({
           });
           if (!isMounted) return;
           setOriginalStructure(resolvedOrig);
-          const sup = calculateStructureSuperpositionRMSD(resolvedOrig, resolved);
-          setSuperpositionResult(sup);
+          if (resolvedOrig.structureType !== 'UNAVAILABLE' && resolvedOrig.allAtoms.length > 0) {
+            const sup = calculateStructureSuperpositionRMSD(resolvedOrig, resolved);
+            setSuperpositionResult(sup);
+          } else {
+            setSuperpositionResult(null);
+          }
+        } else {
+          setOriginalStructure(null);
+          setSuperpositionResult(null);
         }
       } catch (err) {
         console.error('[Structure Studio] Resolution error:', err);
@@ -142,74 +149,74 @@ export const StructureStudioModal: React.FC<StructureStudioModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-md animate-fade-in font-sans">
-      <div className="bg-[#0B0F17] border border-slate-800 rounded-3xl w-full max-w-6xl h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-6 bg-black/80 backdrop-blur-md animate-fade-in font-sans">
+      <div className="bg-[#0B0F17] border border-slate-800 rounded-2xl sm:rounded-3xl w-full max-w-6xl h-[92dvh] flex flex-col overflow-hidden shadow-2xl">
         {/* Top Header Bar */}
-        <div className="bg-[#07090D] border-b border-slate-800 px-6 py-4 flex items-center justify-between gap-4 shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-2xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400">
+        <div className="bg-[#07090D] border-b border-slate-800 px-4 sm:px-6 py-3 sm:py-4 flex flex-wrap items-center justify-between gap-2.5 sm:gap-4 shrink-0">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className="w-9 h-9 rounded-2xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400 shrink-0">
               <Sparkles className="w-5 h-5" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-white font-mono tracking-tight">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-sm sm:text-base font-bold text-white font-mono tracking-tight truncate">
                   Scientific 3D Structure Resolution Studio
                 </h3>
-                <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-[10px] font-bold">
+                <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-[10px] font-bold shrink-0">
                   {structure?.source || 'PHYSICS_RESOLVED'}
                 </span>
               </div>
-              <p className="text-xs text-slate-400 font-mono">
+              <p className="text-xs text-slate-400 font-mono truncate">
                 {structure?.title || 'Interactive 3D Macromolecular Visualizer'}
               </p>
             </div>
           </div>
 
+          {/* Close Button on mobile top row */}
+          <button
+            type="button"
+            onClick={onClose}
+            className="md:order-last p-2 rounded-xl bg-[#161B22] hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer shrink-0"
+          >
+            <X className="w-5 h-5" />
+          </button>
+
           {/* Quick PDB Search Bar */}
-          <form onSubmit={handleFetchCustomPdb} className="hidden md:flex items-center gap-2">
-            <div className="relative">
+          <form onSubmit={handleFetchCustomPdb} className="w-full md:w-auto flex items-center gap-2">
+            <div className="relative flex-1 md:w-64">
               <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-500" />
               <input
                 type="text"
                 placeholder="Fetch PDB (e.g. 1CRN, 1BNA, 4HHB)..."
                 value={searchPdbId}
                 onChange={(e) => setSearchPdbId(e.target.value)}
-                className="w-64 pl-9 pr-3 py-1.5 rounded-xl bg-[#161B22] border border-slate-700 text-xs font-mono text-white placeholder-slate-500 focus:outline-hidden focus:border-purple-500"
+                className="w-full pl-9 pr-3 py-1.5 rounded-xl bg-[#161B22] border border-slate-700 text-xs font-mono text-white placeholder-slate-500 focus:outline-hidden focus:border-purple-500"
               />
             </div>
             <button
               type="submit"
               disabled={isSearching}
-              className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-mono font-semibold transition-colors cursor-pointer"
+              className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-mono font-semibold transition-colors cursor-pointer shrink-0"
             >
               {isSearching ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : 'Fetch'}
             </button>
           </form>
-
-          {/* Close Button */}
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 rounded-xl bg-[#161B22] hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
         </div>
 
         {searchError && (
-          <div className="bg-red-500/10 border-b border-red-500/30 px-6 py-2 text-xs font-mono text-red-400 flex items-center gap-2">
-            <X className="w-3.5 h-3.5" />
+          <div className="bg-red-500/10 border-b border-red-500/30 px-4 sm:px-6 py-2 text-xs font-mono text-red-400 flex items-center gap-2">
+            <X className="w-3.5 h-3.5 shrink-0" />
             <span>{searchError}</span>
           </div>
         )}
 
         {/* Studio Navigation Tabs */}
-        <div className="bg-[#0B0F17] border-b border-slate-800/80 px-6 py-2 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2">
+        <div className="bg-[#0B0F17] border-b border-slate-800/80 px-3 sm:px-6 py-2 flex items-center justify-between gap-2 shrink-0">
+          <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar min-w-0">
             <button
               type="button"
               onClick={() => setActiveTab('viewport')}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-mono font-semibold flex items-center gap-2 transition-all cursor-pointer ${
+              className={`px-3 sm:px-3.5 py-1.5 rounded-xl text-xs font-mono font-semibold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                 activeTab === 'viewport'
                   ? 'bg-emerald-600 text-white shadow-xs'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
@@ -223,7 +230,7 @@ export const StructureStudioModal: React.FC<StructureStudioModalProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveTab('ramachandran')}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-mono font-semibold flex items-center gap-2 transition-all cursor-pointer ${
+                className={`px-3 sm:px-3.5 py-1.5 rounded-xl text-xs font-mono font-semibold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                   activeTab === 'ramachandran'
                     ? 'bg-purple-600 text-white shadow-xs'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
@@ -238,7 +245,7 @@ export const StructureStudioModal: React.FC<StructureStudioModalProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveTab('superposition')}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-mono font-semibold flex items-center gap-2 transition-all cursor-pointer ${
+                className={`px-3 sm:px-3.5 py-1.5 rounded-xl text-xs font-mono font-semibold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                   activeTab === 'superposition'
                     ? 'bg-blue-600 text-white shadow-xs'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
@@ -252,7 +259,7 @@ export const StructureStudioModal: React.FC<StructureStudioModalProps> = ({
             <button
               type="button"
               onClick={() => setActiveTab('pdb_text')}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-mono font-semibold flex items-center gap-2 transition-all cursor-pointer ${
+              className={`px-3 sm:px-3.5 py-1.5 rounded-xl text-xs font-mono font-semibold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                 activeTab === 'pdb_text'
                   ? 'bg-slate-700 text-white shadow-xs'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
@@ -263,9 +270,9 @@ export const StructureStudioModal: React.FC<StructureStudioModalProps> = ({
             </button>
           </div>
 
-          {structure && (
+          {structure && structure.structureType !== 'UNAVAILABLE' && (
             <div className="hidden lg:flex items-center gap-3 text-xs font-mono text-slate-400">
-              <span>Residues: <strong className="text-slate-200">{structure.chains[0]?.residues.length}</strong></span>
+              <span>Residues: <strong className="text-slate-200">{structure.parsedResiduesCount ?? structure.chains.reduce((s, c) => s + c.residues.length, 0)}</strong></span>
               <span>•</span>
               <span>Atoms: <strong className="text-slate-200">{structure.allAtoms.length}</strong></span>
               {structure.resolutionAngstrom && (
@@ -279,7 +286,7 @@ export const StructureStudioModal: React.FC<StructureStudioModalProps> = ({
         </div>
 
         {/* Main Content Viewport */}
-        <div className="flex-1 overflow-y-auto p-6 bg-[#07090D] flex flex-col">
+        <div className="flex-1 overflow-y-auto p-3.5 sm:p-6 bg-[#07090D] flex flex-col">
           {isLoading ? (
             <div className="flex-1 flex flex-col items-center justify-center space-y-3 text-slate-400 font-mono text-xs">
               <RefreshCw className="w-8 h-8 animate-spin text-purple-400" />
@@ -288,59 +295,72 @@ export const StructureStudioModal: React.FC<StructureStudioModalProps> = ({
           ) : structure ? (
             <>
               {activeTab === 'viewport' && (
-                <div className="flex-1 flex flex-col space-y-4">
-                  <div className="flex-1 min-h-[500px]">
-                    <Scientific3DStructureViewer
-                      structure={structure}
-                      selectedResSeq={selectedResSeq}
-                      onSelectResidue={(res) => setSelectedResSeq(res)}
-                      className="h-full shadow-2xl"
-                    />
+                structure.structureType === 'UNAVAILABLE' || structure.allAtoms.length === 0 ? (
+                  <div className="flex-1 flex flex-col items-center justify-center space-y-3 text-center p-6 sm:p-8 font-mono text-xs text-slate-300">
+                    <div className="text-sm font-bold text-white">No Verified 3D Structure Available</div>
+                    <p className="max-w-md text-slate-400 leading-relaxed">
+                      {structure.confidenceInfo?.description || 'No matching experimental structure (RCSB PDB) or AlphaFold DB model was found for this sequence. Enter a PDB ID above to inspect a specific coordinate file.'}
+                    </p>
                   </div>
-
-                  {/* Structural Biophysical Metrics Overview Bar */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 font-mono text-xs">
-                    <div className="bg-[#161B22] border border-slate-800 rounded-2xl p-3 space-y-1">
-                      <span className="text-[10px] text-slate-500 uppercase">α-Helix Fraction</span>
-                      <div className="text-base font-bold text-fuchsia-400">
-                        {structure.secondaryStructureSummary.helixPercent}%
-                      </div>
-                      <span className="text-[10px] text-slate-400">
-                        {structure.secondaryStructureSummary.helixCount} helical segments
-                      </span>
+                ) : (
+                  <div className="flex-1 flex flex-col space-y-4">
+                    <div className="flex-1 min-h-[280px] sm:min-h-[460px]">
+                      <Scientific3DStructureViewer
+                        structure={structure}
+                        selectedResSeq={selectedResSeq}
+                        onSelectResidue={(res) => setSelectedResSeq(res)}
+                        className="h-full shadow-2xl"
+                      />
                     </div>
 
-                    <div className="bg-[#161B22] border border-slate-800 rounded-2xl p-3 space-y-1">
-                      <span className="text-[10px] text-slate-500 uppercase">β-Sheet Fraction</span>
-                      <div className="text-base font-bold text-amber-400">
-                        {structure.secondaryStructureSummary.sheetPercent}%
+                    {/* Structural Biophysical Metrics Overview Bar */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 font-mono text-xs">
+                      <div className="bg-[#161B22] border border-slate-800 rounded-2xl p-3 space-y-1">
+                        <span className="text-[10px] text-slate-500 uppercase">α-Helix Fraction</span>
+                        <div className="text-base font-bold text-fuchsia-400">
+                          {structure.secondaryStructureSummary.helixPercent}%
+                        </div>
+                        <span className="text-[10px] text-slate-400">
+                          {structure.secondaryStructureSummary.helixCount} helical segments
+                        </span>
                       </div>
-                      <span className="text-[10px] text-slate-400">
-                        {structure.secondaryStructureSummary.sheetCount} strands
-                      </span>
-                    </div>
 
-                    <div className="bg-[#161B22] border border-slate-800 rounded-2xl p-3 space-y-1">
-                      <span className="text-[10px] text-slate-500 uppercase">Mean pLDDT Score</span>
-                      <div className="text-base font-bold text-blue-400">
-                        {structure.pLddtAvg || 85.0} / 100
+                      <div className="bg-[#161B22] border border-slate-800 rounded-2xl p-3 space-y-1">
+                        <span className="text-[10px] text-slate-500 uppercase">β-Sheet Fraction</span>
+                        <div className="text-base font-bold text-amber-400">
+                          {structure.secondaryStructureSummary.sheetPercent}%
+                        </div>
+                        <span className="text-[10px] text-slate-400">
+                          {structure.secondaryStructureSummary.sheetCount} strands
+                        </span>
                       </div>
-                      <span className="text-[10px] text-slate-400">
-                        AlphaFold structural confidence
-                      </span>
-                    </div>
 
-                    <div className="bg-[#161B22] border border-slate-800 rounded-2xl p-3 space-y-1">
-                      <span className="text-[10px] text-slate-500 uppercase">Bounding Diameter</span>
-                      <div className="text-base font-bold text-emerald-400">
-                        {(structure.boundingBox.radius * 2).toFixed(1)} Å
+                      <div className="bg-[#161B22] border border-slate-800 rounded-2xl p-3 space-y-1">
+                        <span className="text-[10px] text-slate-500 uppercase">
+                          {structure.pLddtAvg != null ? 'Mean pLDDT Score' : (structure.confidenceInfo?.metric || 'Validation Metric')}
+                        </span>
+                        <div className="text-base font-bold text-blue-400">
+                          {structure.pLddtAvg != null
+                            ? `${structure.pLddtAvg.toFixed(1)} / 100`
+                            : (structure.confidenceInfo?.value ?? (structure.resolutionText || 'Experimental'))}
+                        </div>
+                        <span className="text-[10px] text-slate-400 truncate block">
+                          {structure.confidenceInfo?.description || structure.experimentalMethod || 'Validated coordinate file'}
+                        </span>
                       </div>
-                      <span className="text-[10px] text-slate-400">
-                        Macromolecular envelope
-                      </span>
+
+                      <div className="bg-[#161B22] border border-slate-800 rounded-2xl p-3 space-y-1">
+                        <span className="text-[10px] text-slate-500 uppercase">Bounding Diameter</span>
+                        <div className="text-base font-bold text-emerald-400">
+                          {(structure.boundingBox.radius * 2).toFixed(1)} Å
+                        </div>
+                        <span className="text-[10px] text-slate-400">
+                          Macromolecular envelope
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )
               )}
 
               {activeTab === 'ramachandran' && structure.ramachandranStats && (
@@ -370,7 +390,7 @@ export const StructureStudioModal: React.FC<StructureStudioModalProps> = ({
 
               {activeTab === 'pdb_text' && (
                 <div className="flex-1 flex flex-col space-y-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
                     <span className="text-xs font-mono text-slate-400">
                       Standard PDB Atomic Coordinate Record Format
                     </span>

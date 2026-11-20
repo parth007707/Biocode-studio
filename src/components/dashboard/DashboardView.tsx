@@ -18,7 +18,7 @@ import { RecentResearchActivity } from './RecentResearchActivity';
 interface DashboardViewProps {
   setActiveTab: (tab: NavItem) => void;
   user: any;
-  onOpenAuth: () => void;
+  authReady?: boolean;
   onSelectAnalysis?: (id: string) => void;
   onOpenWorkbench?: (
     sequence: string,
@@ -34,6 +34,7 @@ interface DashboardViewProps {
 export const DashboardView: React.FC<DashboardViewProps> = ({ 
   setActiveTab, 
   user, 
+  authReady = true,
   onSelectAnalysis,
   onOpenWorkbench,
   onOpenAiWithContext
@@ -46,12 +47,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [isMigrationModalOpen, setIsMigrationModalOpen] = useState<boolean>(false);
 
   useEffect(() => {
+    if (!authReady) return;
     let isMounted = true;
     loadDashboardData(isMounted);
     return () => {
       isMounted = false;
     };
-  }, [user?.id]);
+  }, [user?.id, authReady]);
 
   const loadDashboardData = async (isMounted: boolean = true) => {
     setLoading(true);
@@ -68,10 +70,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         setAvailableSequences(sequences);
 
         if (sequences.length > 0) {
-          const preferred = sequences.find(s => s.accession === 'NP_000537') 
-            || sequences.find(s => s.sequence_type?.toLowerCase().includes('prot'))
+          const preferred = sequences.find(s => s.sequence_type?.toLowerCase().includes('prot'))
             || sequences[0];
           setSelectedSequence(preferred);
+        } else {
+          setSelectedSequence(null);
         }
       }
     } catch (err) {
@@ -115,21 +118,40 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     ) || null;
   }, [selectedSequence, recentAnalyses]);
 
-  // Target biological parameters synchronized with Central BioSequence Store
+  // Target biological parameters synchronized with Central BioSequence Store (empty when no target is loaded)
   const currentTarget: TargetSequence = useMemo(() => {
+    const hasSeq = Boolean(centralSequence || selectedSequence?.sequence);
+    if (!hasSeq) {
+      return {
+        accession: '',
+        definition: '',
+        organism: '',
+        sequenceType: '',
+        totalLength: 0,
+        sequence: '',
+        id: ''
+      };
+    }
+
+    const activeSeq = centralSequence || selectedSequence?.sequence || '';
     return {
-      accession: centralAccession || selectedSequence?.accession || 'NP_000537',
-      definition: centralDefinition || selectedSequence?.definition || 'Cellular biological target sequence',
+      accession: centralAccession || selectedSequence?.accession || 'Custom Target',
+      definition: centralDefinition || selectedSequence?.definition || 'Biological target sequence',
       organism: centralOrganism || selectedSequence?.organism || 'Homo sapiens',
       sequenceType: centralSequenceType || selectedSequence?.sequence_type || 'Protein',
-      totalLength: centralLength || selectedSequence?.total_length || 393,
-      sequence: centralSequence || selectedSequence?.sequence || 'MEEPQSDPSVEPPLSQETFSDLWKLLPENNVLSPLPSQAMDDLMLSPDDIEQWFTEDPGPDEAPRMPEAAPPVAPAPAAPTPAAPAPAPSWPLSSSVPSQKTYQGSYGFRLGFLHSGTAKSVTCTYSPALNKMFCQLAKTCPVQLWVDSTPPPGTRVRAMAIYKQSQHMTEVVRRCPHHERCSDSDGLAPPQHLIRVEGNLRVEYLDDRNTFRHSVVVPYEPPEVGSDCTTIHYNYMCNSSCMGGMNRRPILTIITLEDSSGNLLGRNSFEVRVCACPGRDRRTEEENLRKKGEPHHELPPGSTKRALPNNTSSSPQPKKKPLDGEYFTLQIRGRERFEMFRELNEALELKDAQAGKEPGGSRAHSSHLKSKKGQSTSRHKKLMFKTEGPDSD',
+      totalLength: centralLength || selectedSequence?.total_length || activeSeq.length,
+      sequence: activeSeq,
       id: selectedSequence?.id || 'central_target'
     };
   }, [centralAccession, centralDefinition, centralOrganism, centralSequenceType, centralLength, centralSequence, selectedSequence]);
 
   // Navigation handlers
   const handleLaunchWorkbench = (pipeline?: string) => {
+    if (!currentTarget.sequence) {
+      setActiveTab('analysis');
+      return;
+    }
+
     if (onOpenWorkbench) {
       onOpenWorkbench(
         currentTarget.sequence,
@@ -151,15 +173,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const handleOpenFullAi = () => {
     if (onOpenAiWithContext) {
-      onOpenAiWithContext({
-        type: 'sequence',
-        sequenceId: currentTarget.accession,
-        accession: currentTarget.accession,
-        organism: currentTarget.organism,
-        sequenceType: currentTarget.sequenceType,
-        sequenceData: currentTarget.sequence,
-        sequenceLength: currentTarget.totalLength
-      });
+      if (!currentTarget.sequence) {
+        onOpenAiWithContext({
+          type: 'dashboard',
+          totalSequences: availableSequences.length,
+          totalProjects: 0,
+          totalAnalyses: recentAnalyses.length,
+          availableModules: ['Sequence Workbench', 'Structure Explorer', 'Mutation Tracker', 'Database Integrations']
+        });
+      } else {
+        onOpenAiWithContext({
+          type: 'sequence',
+          sequenceId: currentTarget.accession,
+          accession: currentTarget.accession,
+          organism: currentTarget.organism,
+          sequenceType: currentTarget.sequenceType,
+          sequenceData: currentTarget.sequence,
+          sequenceLength: currentTarget.totalLength
+        });
+      }
     } else {
       setActiveTab('ai-assistant');
     }
@@ -183,7 +215,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   if (loading && recentAnalyses.length === 0) {
     return (
-      <div className="min-h-[500px] flex flex-col items-center justify-center space-y-4 bg-scientific-grid">
+      <div className="min-h-[320px] sm:min-h-[500px] flex flex-col items-center justify-center space-y-4 bg-scientific-grid px-4">
         <div className="w-12 h-12 rounded-2xl bg-white border border-sky-200 flex items-center justify-center text-sky-600 shadow-sm">
           <Loader2 className="w-6 h-6 animate-spin text-sky-600" />
         </div>
@@ -200,7 +232,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   return (
     <div className="min-h-full bg-scientific-grid text-slate-900">
       {/* Maximum 1400px Centered Content Container */}
-      <div className="max-w-[1400px] mx-auto px-4 sm:px-6 md:px-8 py-6 space-y-7">
+      <div className="max-w-[1400px] mx-auto px-3.5 sm:px-6 md:px-8 py-5 sm:py-6 space-y-6 sm:space-y-7">
         
         {/* ======================================================== */}
         {/* 1. TOP HEADER / STATUS BAR                               */}

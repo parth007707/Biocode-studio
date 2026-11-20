@@ -43,16 +43,16 @@ export const FullSequenceProgressModal: React.FC<FullSequenceProgressModalProps>
   const formatNumber = (n: number) => n.toLocaleString();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="bg-[#121722] border border-emerald-500/40 w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
+      <div className="bg-[#121722] border border-emerald-500/40 w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92dvh]">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-emerald-950/20">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400">
+        <div className="px-4 sm:px-6 py-3.5 sm:py-4 border-b border-slate-800 flex items-start sm:items-center justify-between gap-2 bg-emerald-950/20">
+          <div className="flex items-start sm:items-center gap-3 min-w-0">
+            <div className="p-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 shrink-0">
               <Dna className="w-5 h-5 animate-pulse" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-bold text-white tracking-tight">
                   Processing Complete Biological Record
                 </span>
@@ -60,7 +60,7 @@ export const FullSequenceProgressModal: React.FC<FullSequenceProgressModalProps>
                   100% Target
                 </span>
               </div>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-slate-400 mt-0.5">
                 Full sequence ingestion &amp; stream-based biological analytics
               </p>
             </div>
@@ -69,7 +69,7 @@ export const FullSequenceProgressModal: React.FC<FullSequenceProgressModalProps>
           <button
             type="button"
             onClick={onCancel}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors cursor-pointer"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors cursor-pointer shrink-0"
             title="Cancel Processing"
           >
             <X className="w-4 h-4" />
@@ -77,7 +77,7 @@ export const FullSequenceProgressModal: React.FC<FullSequenceProgressModalProps>
         </div>
 
         {/* Content Body */}
-        <div className="p-6 space-y-6">
+        <div className="p-4 sm:p-6 space-y-5 sm:space-y-6 overflow-y-auto flex-1">
           {/* Metadata Card */}
           <div className="bg-[#0A0E17] border border-slate-800/90 rounded-xl p-4 space-y-2.5 text-xs font-mono">
             <div className="flex items-center justify-between flex-wrap gap-2">
@@ -167,16 +167,16 @@ export const FullSequenceProgressModal: React.FC<FullSequenceProgressModalProps>
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-3.5 border-t border-slate-800 bg-[#0A0E17] flex items-center justify-between text-xs font-mono">
+        <div className="px-4 sm:px-6 py-3.5 border-t border-slate-800 bg-[#0A0E17] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs font-mono">
           <span className="text-slate-400 text-[11px] flex items-center gap-1.5">
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400 shrink-0" />
             Analyzing biological sequence stream...
           </span>
 
           <button
             type="button"
             onClick={onCancel}
-            className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors cursor-pointer"
+            className="w-full sm:w-auto px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors cursor-pointer text-center"
           >
             Cancel
           </button>

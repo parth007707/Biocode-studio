@@ -100,7 +100,7 @@ export const SequenceValidationLayer: React.FC<SequenceValidationLayerProps> = (
 
   // When invalid characters or biological conflicts exist
   return (
-    <div className="rounded-2xl border border-rose-200 bg-rose-50/70 p-4 space-y-3.5 shadow-xs transition-all animate-fadeIn">
+    <div className="rounded-2xl border border-rose-200 bg-rose-50/70 p-3.5 sm:p-4 space-y-3.5 shadow-xs transition-all animate-fadeIn">
       {/* Top Validation Header Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-start sm:items-center gap-2.5">
@@ -203,9 +203,9 @@ export const SequenceValidationLayer: React.FC<SequenceValidationLayerProps> = (
 
           {/* Position Indices Details for Selected or All Characters */}
           <div className="p-3 bg-white/90 rounded-xl border border-rose-200 text-xs font-mono space-y-2">
-            <div className="flex items-center justify-between text-[11px] text-[#64748B]">
+            <div className="flex flex-wrap items-center justify-between gap-1.5 text-[11px] text-[#64748B]">
               <span className="font-bold text-[#0F172A] flex items-center gap-1.5">
-                <Hash className="w-3.5 h-3.5 text-rose-600" />
+                <Hash className="w-3.5 h-3.5 text-rose-600 shrink-0" />
                 <span>Sequence Coordinate Locations (1-based index)</span>
               </span>
               <span>
@@ -224,7 +224,7 @@ export const SequenceValidationLayer: React.FC<SequenceValidationLayerProps> = (
                       </span>
                       <span className="text-[#334155]">{f.description}</span>
                     </div>
-                    <div className="flex items-center gap-1 overflow-x-auto max-w-sm text-right shrink-0">
+                    <div className="flex items-center gap-1 overflow-x-auto max-w-full sm:max-w-sm shrink-0">
                       <span className="text-[#94A3B8] text-[10px]">Pos:</span>
                       {f.positions.slice(0, 10).map((pos, pIdx) => (
                         <span key={pIdx} className="px-1 py-0.2 rounded bg-rose-50 text-rose-700 font-mono text-[10px] border border-rose-200">

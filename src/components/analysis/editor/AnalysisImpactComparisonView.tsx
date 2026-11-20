@@ -138,7 +138,7 @@ export const AnalysisImpactComparisonView: React.FC<AnalysisImpactComparisonView
       {/* ========================================================================= */}
       {/* 1. VERSIONED COMPARISON SUMMARY BANNER                                     */}
       {/* ========================================================================= */}
-      <div className="bg-white border border-[#E2E8F0] rounded-2xl p-5 md:p-6 shadow-xs space-y-4">
+      <div className="bg-white border border-[#E2E8F0] rounded-2xl p-4 sm:p-5 md:p-6 shadow-xs space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-4 border-b border-[#E2E8F0] pb-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-sky-50 border border-sky-200 flex items-center justify-center text-sky-600 shrink-0">
@@ -258,7 +258,7 @@ export const AnalysisImpactComparisonView: React.FC<AnalysisImpactComparisonView
       {/* ========================================================================= */}
       {/* 2. REAL CALCULATED COMPARATIVE METRICS TABLE                               */}
       {/* ========================================================================= */}
-      <div className="bg-white border border-[#E2E8F0] rounded-2xl p-5 md:p-6 space-y-4 shadow-xs">
+      <div className="bg-white border border-[#E2E8F0] rounded-2xl p-4 sm:p-5 md:p-6 space-y-4 shadow-xs">
         <div className="flex items-center justify-between flex-wrap gap-3 pb-2 border-b border-[#E2E8F0]">
           <div className="space-y-0.5">
             <h4 className="text-sm font-bold text-[#0F172A] flex items-center gap-2 font-mono">
@@ -270,15 +270,15 @@ export const AnalysisImpactComparisonView: React.FC<AnalysisImpactComparisonView
             </p>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap max-w-full">
             {/* Category Filter Pills */}
-            <div className="flex items-center gap-1 bg-[#F8FAFC] p-1 rounded-xl border border-[#E2E8F0] text-[11px] font-mono">
+            <div className="flex items-center gap-1 bg-[#F8FAFC] p-1 rounded-xl border border-[#E2E8F0] text-[11px] font-mono overflow-x-auto max-w-full">
               {['all', 'primary', 'composition', 'structure', 'physicochemical'].map((cat) => (
                 <button
                   key={cat}
                   type="button"
                   onClick={() => setSelectedCategory(cat)}
-                  className={`px-2.5 py-1 rounded-lg capitalize transition-colors cursor-pointer ${
+                  className={`px-2.5 py-1 rounded-lg capitalize transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
                     selectedCategory === cat
                       ? 'bg-sky-600 text-white font-bold shadow-2xs'
                       : 'text-slate-600 hover:text-slate-900'
@@ -315,7 +315,7 @@ export const AnalysisImpactComparisonView: React.FC<AnalysisImpactComparisonView
 
         {/* Metrics Comparison Table */}
         <div className="overflow-x-auto rounded-xl border border-[#E2E8F0]">
-          <table className="w-full text-left text-xs font-mono">
+          <table className="w-full min-w-[560px] text-left text-xs font-mono">
             <thead className="bg-[#F8FAFC] border-b border-[#E2E8F0] text-slate-600 text-[11px] uppercase tracking-wider font-semibold">
               <tr>
                 <th className="py-3 px-4">Metric</th>
@@ -378,7 +378,7 @@ export const AnalysisImpactComparisonView: React.FC<AnalysisImpactComparisonView
       {/* ========================================================================= */}
       {/* 3. STRUCTURAL RESOLUTION & ORIGINAL VS MODIFIED STRUCTURAL COMPARISON     */}
       {/* ========================================================================= */}
-      <div className="bg-white border border-[#E2E8F0] rounded-2xl p-5 md:p-6 space-y-5 shadow-xs">
+      <div className="bg-white border border-[#E2E8F0] rounded-2xl p-4 sm:p-5 md:p-6 space-y-5 shadow-xs">
         {/* Section Header & Mode Toggle */}
         <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-[#E2E8F0]">
           <div className="space-y-0.5">

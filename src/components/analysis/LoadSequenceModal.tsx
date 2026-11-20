@@ -308,30 +308,30 @@ export const LoadSequenceModal: React.FC<LoadSequenceModalProps> = ({
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs font-sans animate-fadeIn">
-      <div className="bg-white rounded-3xl border border-sky-200 shadow-2xl max-w-3xl w-full max-h-[90vh] flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/50 backdrop-blur-xs font-sans animate-fadeIn">
+      <div className="bg-white rounded-2xl sm:rounded-3xl border border-sky-200 shadow-2xl max-w-3xl w-full max-h-[92dvh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="p-6 pb-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-sky-50 to-indigo-50">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-2xl bg-[#0284C7] text-white shadow-xs">
+        <div className="p-4 sm:p-6 pb-4 border-b border-slate-100 flex items-center justify-between gap-3 bg-gradient-to-r from-sky-50 to-indigo-50">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="p-2.5 rounded-2xl bg-[#0284C7] text-white shadow-xs shrink-0">
               <Database className="w-5 h-5" />
             </div>
-            <div>
-              <h3 className="text-lg font-bold text-[#0F172A] font-display">Load Biological Sequence Target</h3>
+            <div className="min-w-0">
+              <h3 className="text-base sm:text-lg font-bold text-[#0F172A] font-display truncate">Load Biological Sequence Target</h3>
               <p className="text-xs text-slate-600 font-sans">Select a verified benchmark protein, saved project target, or query NCBI / UniProt</p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-white transition-colors cursor-pointer"
+            className="p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-white transition-colors cursor-pointer shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Search Bar & Explorer Shortcut */}
-        <div className="p-6 pb-3 border-b border-slate-100 flex flex-col sm:flex-row items-center gap-3">
+        <div className="p-4 sm:p-6 pb-3 border-b border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
           <div className="relative flex-1 w-full">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
             <input
@@ -349,7 +349,7 @@ export const LoadSequenceModal: React.FC<LoadSequenceModalProps> = ({
                 onClose();
                 onOpenExplorer();
               }}
-              className="px-4 py-2.5 rounded-xl bg-sky-50 hover:bg-sky-100 text-[#0284C7] border border-sky-200 text-xs font-semibold font-mono flex items-center gap-2 transition-colors shrink-0 cursor-pointer"
+              className="w-full sm:w-auto justify-center px-4 py-2.5 rounded-xl bg-sky-50 hover:bg-sky-100 text-[#0284C7] border border-sky-200 text-xs font-semibold font-mono flex items-center gap-2 transition-colors shrink-0 cursor-pointer"
             >
               <Globe className="w-3.5 h-3.5 text-[#0284C7]" />
               <span>Browse Data Explorer</span>
@@ -359,14 +359,14 @@ export const LoadSequenceModal: React.FC<LoadSequenceModalProps> = ({
 
         {/* Loading / Error Notifications */}
         {fetchingAccession && (
-          <div className="mx-6 mt-4 p-3.5 rounded-xl bg-sky-50 border border-sky-200 text-xs text-sky-800 flex items-center gap-2.5 animate-fadeIn">
+          <div className="mx-4 sm:mx-6 mt-4 p-3.5 rounded-xl bg-sky-50 border border-sky-200 text-xs text-sky-800 flex items-center gap-2.5 animate-fadeIn">
             <Loader2 className="w-4 h-4 animate-spin text-[#0284C7] shrink-0" />
             <span className="font-mono">{fetchStatusMsg || `Loading ${fetchingAccession}...`}</span>
           </div>
         )}
 
         {fetchError && (
-          <div className="mx-6 mt-4 p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-center justify-between gap-3 animate-fadeIn">
+          <div className="mx-4 sm:mx-6 mt-4 p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fadeIn">
             <div className="flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
               <div>
@@ -377,7 +377,7 @@ export const LoadSequenceModal: React.FC<LoadSequenceModalProps> = ({
             <button
               type="button"
               onClick={() => handleLoadTarget(fetchError.target)}
-              className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-mono font-medium text-xs flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 shadow-2xs"
+              className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-mono font-medium text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer shrink-0 shadow-2xs"
             >
               <RotateCcw className="w-3.5 h-3.5" />
               <span>Retry</span>
@@ -386,7 +386,7 @@ export const LoadSequenceModal: React.FC<LoadSequenceModalProps> = ({
         )}
 
         {/* Sequence List */}
-        <div className="p-6 overflow-y-auto space-y-6 custom-scrollbar flex-1">
+        <div className="p-4 sm:p-6 overflow-y-auto space-y-6 custom-scrollbar flex-1">
           {/* Live Online Query Results (UniProt / NCBI) */}
           {searchTerm.trim().length >= 2 && (
             <div className="space-y-3">
@@ -409,7 +409,7 @@ export const LoadSequenceModal: React.FC<LoadSequenceModalProps> = ({
                     <div
                       key={target.accession}
                       onClick={() => handleLoadTarget(target)}
-                      className="p-4 rounded-2xl border border-sky-200 hover:border-sky-400 bg-sky-50/30 hover:bg-sky-50 transition-all cursor-pointer flex items-center justify-between gap-4 group"
+                      className="p-3.5 sm:p-4 rounded-2xl border border-sky-200 hover:border-sky-400 bg-sky-50/30 hover:bg-sky-50 transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 group"
                     >
                       <div className="space-y-1">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -484,9 +484,9 @@ export const LoadSequenceModal: React.FC<LoadSequenceModalProps> = ({
                   <div
                     key={rec.id}
                     onClick={() => handleSelectSaved(rec)}
-                    className="p-4 rounded-2xl border border-slate-200 hover:border-sky-400 hover:bg-sky-50/50 transition-all cursor-pointer flex items-center justify-between gap-4 group"
+                    className="p-3.5 sm:p-4 rounded-2xl border border-slate-200 hover:border-sky-400 hover:bg-sky-50/50 transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 group"
                   >
-                    <div className="space-y-1">
+                    <div className="space-y-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-mono font-bold text-sm text-[#0F172A]">{rec.accession}</span>
                         <span className="text-[10px] font-mono bg-sky-100 text-sky-800 px-2 py-0.5 rounded font-bold">
@@ -498,7 +498,7 @@ export const LoadSequenceModal: React.FC<LoadSequenceModalProps> = ({
                     </div>
                     <button
                       type="button"
-                      className="px-3.5 py-1.5 rounded-xl bg-white group-hover:bg-[#0284C7] group-hover:text-white border border-slate-300 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-2xs shrink-0 cursor-pointer"
+                      className="w-full sm:w-auto justify-center px-3.5 py-1.5 rounded-xl bg-white group-hover:bg-[#0284C7] group-hover:text-white border border-slate-300 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-2xs shrink-0 cursor-pointer"
                     >
                       <span>Load Target</span>
                       <ArrowRight className="w-3.5 h-3.5" />
@@ -519,7 +519,7 @@ export const LoadSequenceModal: React.FC<LoadSequenceModalProps> = ({
                 <div
                   key={sample.accession}
                   onClick={() => handleLoadTarget(sample)}
-                  className="p-4 rounded-2xl border border-slate-200 hover:border-sky-400 hover:bg-sky-50/50 transition-all cursor-pointer flex items-center justify-between gap-4 group"
+                  className="p-3.5 sm:p-4 rounded-2xl border border-slate-200 hover:border-sky-400 hover:bg-sky-50/50 transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 group"
                 >
                   <div className="space-y-1">
                     <div className="flex items-center gap-2 flex-wrap">

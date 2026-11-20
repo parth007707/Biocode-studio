@@ -428,7 +428,7 @@ export const DatabaseSourceView: React.FC<DatabaseSourceViewProps> = ({
   };
 
   return (
-    <div id="database-source-view" className="p-4 md:p-6 max-w-5xl mx-auto space-y-5">
+    <div id="database-source-view" className="p-3.5 sm:p-4 md:p-6 max-w-5xl mx-auto space-y-5">
       {/* Large Sequence Analysis Modal */}
       {largeSequenceRecord && (
         <LargeSequenceModal
@@ -469,7 +469,7 @@ export const DatabaseSourceView: React.FC<DatabaseSourceViewProps> = ({
 
                 {/* Floating Dropdown Overlay */}
                 {isSourceDropdownOpen && (
-                  <div className="absolute left-0 mt-1.5 w-56 bg-white border border-[#E2E8F0] rounded-xl p-1.5 shadow-xl z-50 animate-in fade-in duration-100">
+                  <div className="absolute left-0 mt-1.5 w-56 max-w-[calc(100vw-2rem)] bg-white border border-[#E2E8F0] rounded-xl p-1.5 shadow-xl z-50 animate-in fade-in duration-100">
                     <div className="px-2 py-1 text-[10px] font-mono uppercase text-[#64748B] font-bold border-b border-[#E2E8F0] mb-1">
                       Select Primary Source
                     </div>
@@ -528,7 +528,7 @@ export const DatabaseSourceView: React.FC<DatabaseSourceViewProps> = ({
 
                 {/* Floating Dropdown Overlay */}
                 {isCategoryDropdownOpen && (
-                  <div className="absolute left-0 mt-1.5 w-64 bg-white border border-[#E2E8F0] rounded-xl p-1.5 shadow-xl z-50 animate-in fade-in duration-100">
+                  <div className="absolute left-0 mt-1.5 w-64 max-w-[calc(100vw-2rem)] bg-white border border-[#E2E8F0] rounded-xl p-1.5 shadow-xl z-50 animate-in fade-in duration-100">
                     <div className="px-2 py-1 text-[10px] font-mono uppercase text-[#64748B] font-bold border-b border-[#E2E8F0] mb-1">
                       {source.category} Search Categories
                     </div>
@@ -655,26 +655,26 @@ export const DatabaseSourceView: React.FC<DatabaseSourceViewProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+          <div className="relative flex-1 min-w-0">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#0284C7]" />
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Search sequence, gene, accession or organism..."
-              className="w-full bg-white border border-[#CBD5E1] rounded-xl pl-10 pr-20 py-2.5 md:py-3 text-xs md:text-sm text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#38BDF8] focus:ring-1 focus:ring-[#38BDF8]/30 transition-all font-mono shadow-2xs"
+              className="w-full bg-white border border-[#CBD5E1] rounded-xl pl-10 pr-10 sm:pr-20 py-2.5 md:py-3 text-xs md:text-sm text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#38BDF8] focus:ring-1 focus:ring-[#38BDF8]/30 transition-all font-mono shadow-2xs"
             />
             {searchTerm && (
               <button
                 type="button"
                 onClick={() => setSearchTerm('')}
-                className="absolute right-12 top-1/2 -translate-y-1/2 p-1 text-[#94A3B8] hover:text-[#0F172A]"
+                className="absolute right-3 sm:right-12 top-1/2 -translate-y-1/2 p-1 text-[#94A3B8] hover:text-[#0F172A]"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
-            <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[10px] font-mono text-[#64748B] bg-[#F1F5F9] px-1.5 py-0.5 rounded border border-[#E2E8F0]">
+            <span className="hidden sm:inline-block absolute right-3.5 top-1/2 -translate-y-1/2 text-[10px] font-mono text-[#64748B] bg-[#F1F5F9] px-1.5 py-0.5 rounded border border-[#E2E8F0]">
               ↵
             </span>
           </div>
@@ -682,7 +682,7 @@ export const DatabaseSourceView: React.FC<DatabaseSourceViewProps> = ({
           <button
             type="submit"
             disabled={isExecuting || !searchTerm.trim()}
-            className="px-4 md:px-5 py-2.5 md:py-3 bg-[#0284C7] hover:bg-[#0369a1] disabled:opacity-50 text-white font-semibold text-xs rounded-xl transition-all flex items-center gap-2 shrink-0 shadow-xs cursor-pointer"
+            className="px-4 md:px-5 py-2.5 md:py-3 bg-[#0284C7] hover:bg-[#0369a1] disabled:opacity-50 text-white font-semibold text-xs rounded-xl transition-all flex items-center justify-center gap-2 shrink-0 shadow-xs cursor-pointer"
           >
             {isExecuting ? (
               <>
@@ -702,7 +702,7 @@ export const DatabaseSourceView: React.FC<DatabaseSourceViewProps> = ({
         {/* 3. OPTIONAL ADVANCED FILTERS & COMPACT EXAMPLES TOGGLE */}
         {/* ========================================================================= */}
         <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {/* Try Example Dropdown ▾ */}
             {source.sampleQueries.length > 0 && (
               <div className="relative" ref={examplesDropdownRef}>
@@ -719,7 +719,7 @@ export const DatabaseSourceView: React.FC<DatabaseSourceViewProps> = ({
 
                 {/* Floating Examples Menu */}
                 {isExamplesOpen && (
-                  <div className="absolute left-0 mt-1.5 w-72 md:w-88 bg-white border border-[#E2E8F0] rounded-xl p-2 shadow-xl z-50 space-y-1 animate-in fade-in duration-100">
+                  <div className="absolute left-0 mt-1.5 w-72 md:w-88 max-w-[calc(100vw-2rem)] bg-white border border-[#E2E8F0] rounded-xl p-2 shadow-xl z-50 space-y-1 animate-in fade-in duration-100">
                     <div className="px-2.5 py-1 text-[10px] uppercase font-mono text-[#64748B] font-bold border-b border-[#E2E8F0]">
                       Standard Reference Accessions
                     </div>
@@ -862,7 +862,7 @@ export const DatabaseSourceView: React.FC<DatabaseSourceViewProps> = ({
       {searchResult ? (
         <div className="space-y-3.5">
           {/* Results Summary Header */}
-          <div className="flex items-center justify-between pb-2 border-b border-[#E2E8F0]">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[#E2E8F0]">
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-600" />
               <h4 className="text-xs font-bold uppercase tracking-wider text-[#0F172A]">
@@ -958,7 +958,7 @@ export const DatabaseSourceView: React.FC<DatabaseSourceViewProps> = ({
                     </div>
 
                     {/* Step 5: Two Clear Actions — Analyze Complete Sequence (Primary) & Select Region (Secondary) */}
-                    <div className="flex flex-wrap items-center gap-2 shrink-0 self-end md:self-center">
+                    <div className="flex flex-wrap items-center gap-2 shrink-0 w-full md:w-auto justify-start sm:justify-end md:justify-center">
                       {/* Secondary Action: Select Region */}
                       <button
                         type="button"

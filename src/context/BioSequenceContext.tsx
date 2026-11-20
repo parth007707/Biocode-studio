@@ -41,6 +41,7 @@ import {
   LoadSequenceTargetParams,
   LoadedSequenceResult
 } from '../services/bio/sequenceLoader';
+import { getOrCreateGuestScopeId } from '../lib/supabase/client';
 
 export interface VersionHistoryItem {
   versionNumber: number;
@@ -133,7 +134,8 @@ export interface BioSequenceContextValue extends CanonicalBioSequenceState {
   ) => Promise<boolean>;
   applyWorkingCopy: (
     versionSummary?: string,
-    targetPipeline?: string
+    targetPipeline?: string,
+    projectId?: string
   ) => Promise<boolean>;
   discardWorkingCopy: () => void;
   applyChanges: (
@@ -148,32 +150,29 @@ export interface BioSequenceContextValue extends CanonicalBioSequenceState {
   restoreVersion: (versionNumber: number) => void;
   updateStructure: () => Promise<void>;
   setStructureState: React.Dispatch<React.SetStateAction<StructureSyncState>>;
-  reanalyzeCurrentSequence: (pipeline?: string) => Promise<void>;
+  reanalyzeCurrentSequence: (pipeline?: string) => Promise<NormalizedWorkbenchState | null>;
   resetToOriginal: () => void;
   saveCurrentVersionToSupabase: (userId?: string) => Promise<{ success: boolean; message?: string }>;
   setWhatIfSimulation: (result: WhatIfSimulationResult | null) => void;
   clearWhatIfSimulation: () => void;
 }
 
-const STORAGE_KEY = 'biocode_active_sequence_v2';
+const getScopedStorageKey = (userId?: string | null) =>
+  `biocode_active_sequence_v2_${userId || getOrCreateGuestScopeId()}`;
 
 const BioSequenceContext = createContext<BioSequenceContextValue | null>(null);
 
-const DEFAULT_INITIAL_P53 = {
-  sequenceId: 'seq_np000537',
-  accession: 'NP_000537',
-  definition: 'Cellular tumor antigen p53',
-  organism: 'Homo sapiens',
-  sequenceType: 'PROTEIN' as const,
-  sequence: 'MEEPQSDPSVEPPLSQETFSDLWKLLPENNVLSPLPSQAMDDLMLSPDDIEQWFTEDPGPDEAPRMPEAAPPVAPAPAAPTPAAPAPAPSWPLSSSVPSQKTYQGSYGFRLGFLHSGTAKSVTCTYSPALNKMFCQLAKTCPVQLWVDSTPPPGTRVRAMAIYKQSQHMTEVVRRCPHHERCSDSDGLAPPQHLIRVEGNLRVEYLDDRNTFRHSVVVPYEPPEVGSDCTTIHYNYMCNSSCMGGMNRRPILTIITLEDSSGNLLGRNSFEVRVCACPGRDRRTEEENLRKKGEPHHELPPGSTKRALPNNTSSSPQPKKKPLDGEYFTLQIRGRERFEMFRELNEALELKDAQAGKEPGGSRAHSSHLKSKKGQSTSRHKKLMFKTEGPDSD'
-};
+export const BioSequenceProvider: React.FC<{
+  children: React.ReactNode;
+  userId?: string;
+  authReady?: boolean;
+}> = ({ children, userId, authReady = true }) => {
+  const storageKey = useMemo(() => getScopedStorageKey(userId), [userId]);
 
-export const BioSequenceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Try to restore saved active sequence from localStorage
-  const savedState = useMemo(() => {
+  const readSavedState = useCallback((key: string) => {
     try {
       if (typeof window !== 'undefined' && window.localStorage) {
-        const item = window.localStorage.getItem(STORAGE_KEY);
+        const item = window.localStorage.getItem(key);
         if (item) {
           const parsed = JSON.parse(item);
           if (parsed && typeof parsed.sequence === 'string' && parsed.sequence.trim().length > 0) {
@@ -187,24 +186,31 @@ export const BioSequenceProvider: React.FC<{ children: React.ReactNode }> = ({ c
     return null;
   }, []);
 
-  // Canonical Sequence State (Initialized from active saved workspace or default NP_000537 benchmark)
-  const [sequenceId, setSequenceId] = useState<string>(savedState?.sequenceId || DEFAULT_INITIAL_P53.sequenceId);
-  const [accession, setAccession] = useState<string>(savedState?.accession || DEFAULT_INITIAL_P53.accession);
-  const [definition, setDefinition] = useState<string>(savedState?.definition || DEFAULT_INITIAL_P53.definition);
-  const [organism, setOrganism] = useState<string>(savedState?.organism || DEFAULT_INITIAL_P53.organism);
-  const [sequence, setSequence] = useState<string>(savedState?.sequence || DEFAULT_INITIAL_P53.sequence);
-  const [originalSequence, setOriginalSequence] = useState<string>(savedState?.originalSequence || savedState?.sequence || DEFAULT_INITIAL_P53.sequence);
+  // Try to restore saved active sequence from scoped localStorage ONLY when available for this session
+  const savedState = useMemo(() => {
+    if (!authReady) return null;
+    return readSavedState(storageKey);
+  }, [authReady, storageKey, readSavedState]);
+
+  // Canonical Sequence State (Starts completely empty for every new visitor)
+  const [sequenceId, setSequenceId] = useState<string>(savedState?.sequenceId || '');
+  const [accession, setAccession] = useState<string>(savedState?.accession || '');
+  const [definition, setDefinition] = useState<string>(savedState?.definition || '');
+  const [organism, setOrganism] = useState<string>(savedState?.organism || '');
+  const [sequence, setSequence] = useState<string>(savedState?.sequence || '');
+  const [originalSequence, setOriginalSequence] = useState<string>(savedState?.originalSequence || savedState?.sequence || '');
   const [sequenceType, setSequenceType] = useState<'DNA' | 'RNA' | 'PROTEIN' | 'UNKNOWN'>(() => {
-    const acc = (savedState?.accession || DEFAULT_INITIAL_P53.accession || '').toUpperCase();
+    if (!savedState?.sequence) return 'UNKNOWN';
+    const acc = (savedState?.accession || '').toUpperCase();
     const mol = (savedState?.sourceMetadata?.molecule_type || savedState?.sourceMetadata?.moleculeType || '').toLowerCase();
     if (acc.startsWith('NM_') || acc.startsWith('XM_') || acc.startsWith('NR_') || acc.startsWith('XR_') || mol === 'mrna') {
       return 'RNA';
     }
-    return savedState?.sequenceType || DEFAULT_INITIAL_P53.sequenceType;
+    return savedState?.sequenceType || 'UNKNOWN';
   });
   const [versionNumber, setVersionNumber] = useState<number>(savedState?.versionNumber || 1);
   const [sourceMetadata, setSourceMetadata] = useState<SequenceSourceMetadata | undefined>(savedState?.sourceMetadata || undefined);
-  const [hasActiveSequence, setHasActiveSequence] = useState<boolean>(true);
+  const [hasActiveSequence, setHasActiveSequence] = useState<boolean>(Boolean(savedState?.sequence));
 
   // Analysis & Status
   const [isLoadingTarget, setIsLoadingTarget] = useState<boolean>(false);
@@ -220,13 +226,23 @@ export const BioSequenceProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [lastUpdated, setLastUpdated] = useState<string>(new Date().toISOString());
 
   // Structure Status
-  const [structureState, setStructureState] = useState<StructureSyncState>({
-    status: 'SYNCHRONIZED',
-    structureType: 'PREDICTED',
-    sourceName: 'Sequence-derived structural model',
-    confidence: 'High Confidence',
-    message: 'Structure synchronized with sequence'
-  });
+  const [structureState, setStructureState] = useState<StructureSyncState>(
+    savedState?.sequence
+      ? {
+          status: 'SYNCHRONIZED',
+          structureType: 'PREDICTED',
+          sourceName: 'Sequence-derived structural model',
+          confidence: 'High Confidence',
+          message: 'Structure synchronized with sequence'
+        }
+      : {
+          status: 'SYNCHRONIZED',
+          structureType: 'UNAVAILABLE',
+          sourceName: '',
+          confidence: '',
+          message: 'No active sequence loaded'
+        }
+  );
 
   // Version History Store
   const [versionHistory, setVersionHistory] = useState<VersionHistoryItem[]>(
@@ -385,16 +401,16 @@ export const BioSequenceProvider: React.FC<{ children: React.ReactNode }> = ({ c
     [accession, sourceMetadata]
   );
 
-  // Sync to localStorage
+  // Sync to scoped localStorage
   const persistStateLocally = useCallback(
     (seq: string, origSeq: string, acc: string, def: string, org: string, type: string, vNum: number, vHist: VersionHistoryItem[], sId: string, meta?: any) => {
       try {
         if (typeof window !== 'undefined' && window.localStorage) {
           if (!seq) {
-            window.localStorage.removeItem(STORAGE_KEY);
+            window.localStorage.removeItem(storageKey);
           } else {
             window.localStorage.setItem(
-              STORAGE_KEY,
+              storageKey,
               JSON.stringify({
                 sequenceId: sId,
                 accession: acc,
@@ -415,21 +431,42 @@ export const BioSequenceProvider: React.FC<{ children: React.ReactNode }> = ({ c
         console.warn('[BioSequenceContext] Failed to persist state:', e);
       }
     },
-    []
+    [storageKey]
   );
 
-  // Initialize analysis on restore if active state was preserved in localStorage
+  // Sync / restore state whenever authReady settles or scoped storageKey changes
+  const lastRestoredKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (savedState && savedState.sequence && savedState.sequence.trim().length > 0) {
-      const seqToCompute = savedState.sequence;
-      const typeToCompute = (savedState.sequenceType || 'PROTEIN') as 'DNA' | 'RNA' | 'PROTEIN';
-      const vNum = savedState.versionNumber || 1;
+    if (!authReady) return;
+    if (lastRestoredKeyRef.current === storageKey) return;
+    lastRestoredKeyRef.current = storageKey;
+
+    const restored = readSavedState(storageKey);
+    if (restored && restored.sequence && restored.sequence.trim().length > 0) {
+      const seqToCompute = restored.sequence;
+      const typeToCompute = (restored.sequenceType || 'PROTEIN') as 'DNA' | 'RNA' | 'PROTEIN';
+      const vNum = restored.versionNumber || 1;
+
+      setSequenceId(restored.sequenceId || '');
+      setAccession(restored.accession || '');
+      setDefinition(restored.definition || '');
+      setOrganism(restored.organism || '');
+      setSequence(seqToCompute);
+      setOriginalSequence(restored.originalSequence || seqToCompute);
+      setSequenceType(typeToCompute);
+      setVersionNumber(vNum);
+      setSourceMetadata(restored.sourceMetadata || undefined);
+      setHasActiveSequence(true);
 
       try {
         const clean = seqToCompute.toUpperCase().replace(/[^A-Z*]/g, '');
         const norm = computeBiologicalPipeline(clean, typeToCompute, 'Automated Sequence Analysis', [], vNum);
         setAnalysisResults(norm);
-        if (!savedState.versionHistory || savedState.versionHistory.length === 0) {
+        setAnalysisStatus('synchronized');
+        setAnalysisMessage('Analysis synchronized with canonical sequence');
+        if (restored.versionHistory && Array.isArray(restored.versionHistory) && restored.versionHistory.length > 0) {
+          setVersionHistory(restored.versionHistory);
+        } else {
           setVersionHistory([
             {
               versionNumber: vNum,
@@ -439,15 +476,45 @@ export const BioSequenceProvider: React.FC<{ children: React.ReactNode }> = ({ c
               mutations: [],
               createdAt: new Date().toISOString(),
               analysisResults: norm,
-              summary: `Loaded ${savedState.accession || 'Target'} (${clean.length} aa)`
+              summary: `Loaded ${restored.accession || 'Target'} (${clean.length} ${typeToCompute === 'PROTEIN' ? 'aa' : 'bp'})`
             }
           ]);
         }
+        setStructureState({
+          status: 'SYNCHRONIZED',
+          structureType: 'PREDICTED',
+          sourceName: 'Sequence-derived structural model',
+          confidence: 'High Confidence',
+          message: 'Structure synchronized with sequence'
+        });
       } catch (e) {
         console.warn('[BioSequenceContext] Initial restore calculation failed:', e);
       }
+    } else {
+      // Fresh empty state for this visitor/session
+      setSequenceId('');
+      setAccession('');
+      setDefinition('');
+      setOrganism('');
+      setSequence('');
+      setOriginalSequence('');
+      setSequenceType('UNKNOWN');
+      setVersionNumber(1);
+      setSourceMetadata(undefined);
+      setHasActiveSequence(false);
+      setAnalysisResults(null);
+      setAnalysisStatus('idle');
+      setAnalysisMessage('No active sequence workspace');
+      setVersionHistory([]);
+      setStructureState({
+        status: 'SYNCHRONIZED',
+        structureType: 'UNAVAILABLE',
+        sourceName: '',
+        confidence: '',
+        message: 'No active sequence loaded'
+      });
     }
-  }, []);
+  }, [authReady, storageKey, readSavedState, computeBiologicalPipeline]);
 
   /**
    * Action: Load Target via Shared Universal Sequence Loader
@@ -725,7 +792,7 @@ export const BioSequenceProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
       // Save to Supabase in background
       try {
-        bioService.saveCompletedAnalysis(undefined, {
+        bioService.saveCompletedAnalysis(userId, {
           sequenceInfo: {
             accession: acc,
             definition: def,
@@ -746,7 +813,7 @@ export const BioSequenceProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
       return true;
     },
-    [loadSequence]
+    [loadSequence, userId]
   );
 
   /**
@@ -936,7 +1003,7 @@ export const BioSequenceProvider: React.FC<{ children: React.ReactNode }> = ({ c
    * Action: Apply Working Copy Changes (Creates new committed version e.g. V2, updates history & Supabase)
    */
   const applyWorkingCopy = useCallback(
-    async (versionSummary?: string, targetPipeline: string = 'Automated Sequence Analysis'): Promise<boolean> => {
+    async (versionSummary?: string, targetPipeline: string = 'Automated Sequence Analysis', projectId?: string): Promise<boolean> => {
       if (!isModified || !cleanSequence) {
         return false;
       }
@@ -996,14 +1063,25 @@ export const BioSequenceProvider: React.FC<{ children: React.ReactNode }> = ({ c
         sourceMetadata
       );
 
-      // Persist version to Supabase
+      // Persist version analysis and mutation record to Supabase / isolated visitor workspace
       try {
-        await bioService.saveCompletedAnalysis(undefined, {
+        const versionSaveResults = analysisResults
+          ? {
+              ...analysisResults,
+              versionNumber: nextVersionNumber,
+              mutations: derivedMutations
+            }
+          : {
+              versionNumber: nextVersionNumber,
+              mutations: derivedMutations
+            };
+
+        const saveRes = await bioService.saveCompletedAnalysis(userId, {
           sequenceInfo: {
             accession,
             definition,
             organism,
-            sequence_type: sequenceType === 'PROTEIN' ? 'Protein' : 'Genomic DNA',
+            sequence_type: sequenceType === 'PROTEIN' ? 'Protein' : sequenceType === 'RNA' ? 'RNA Transcript' : 'Genomic DNA',
             sequence: cleanSequence,
             total_length: cleanSequence.length,
             source: 'BioCode Sequence Workbench'
@@ -1011,17 +1089,42 @@ export const BioSequenceProvider: React.FC<{ children: React.ReactNode }> = ({ c
           analysisInfo: {
             analysis_type: targetPipeline,
             sequence_type: sequenceType,
+            project_id: projectId,
             result_summary: `Version ${nextVersionNumber}: ${itemSummary}`,
-            results: analysisResults
+            results: versionSaveResults
           }
         });
+
+        await bioService.saveSequenceVersion(
+          {
+            sequence_id: saveRes?.sequenceId || undefined,
+            sequence_record_id: saveRes?.sequenceId || undefined,
+            accession: accession || undefined,
+            original_sequence: cleanOriginal,
+            modified_sequence: cleanSequence,
+            sequence_data: cleanSequence,
+            version_number: nextVersionNumber,
+            changes: derivedMutations,
+            original_length: cleanOriginal.length,
+            modified_length: cleanSequence.length,
+            total_changes: derivedMutations.length,
+            status: 'Completed',
+            metadata: {
+              pipeline: targetPipeline,
+              summary: itemSummary,
+              projectId: projectId || null,
+              analysisId: saveRes?.analysisId || null
+            }
+          },
+          userId
+        );
       } catch (persistErr) {
         console.log('[BioSequenceContext] Supabase persistence fallback active:', persistErr);
       }
 
       return true;
     },
-    [isModified, cleanSequence, cleanOriginal, sequenceType, versionHistory, versionNumber, analysisResults, accession, definition, organism, sequenceId, sourceMetadata, persistStateLocally]
+    [isModified, cleanSequence, cleanOriginal, sequenceType, versionHistory, versionNumber, analysisResults, accession, definition, organism, sequenceId, sourceMetadata, persistStateLocally, userId, clearWhatIfSimulation]
   );
 
   /**
@@ -1225,10 +1328,10 @@ export const BioSequenceProvider: React.FC<{ children: React.ReactNode }> = ({ c
    * Action: Save current version to Supabase / persistent record
    */
   const saveCurrentVersionToSupabase = useCallback(
-    async (userId?: string): Promise<{ success: boolean; message?: string }> => {
+    async (explicitUserId?: string): Promise<{ success: boolean; message?: string }> => {
       try {
         if (cleanSequence && analysisResults) {
-          await bioService.saveCompletedAnalysis(userId, {
+          await bioService.saveCompletedAnalysis(explicitUserId || userId, {
             sequenceInfo: {
               accession,
               definition,
@@ -1257,15 +1360,15 @@ export const BioSequenceProvider: React.FC<{ children: React.ReactNode }> = ({ c
         };
       }
     },
-    [versionNumber, cleanSequence, analysisResults, accession, definition, organism, sequenceType, mutations]
+    [userId, versionNumber, cleanSequence, analysisResults, accession, definition, organism, sequenceType, mutations]
   );
 
   /**
    * Action: Reanalyze current sequence with a specified pipeline using centralized analyzeSequence
    */
   const reanalyzeCurrentSequence = useCallback(
-    async (pipelineName: string = 'Automated Sequence Analysis'): Promise<void> => {
-      await analyzeSequence(cleanSequence, sequenceType, pipelineName, mutations, versionNumber);
+    async (pipelineName: string = 'Automated Sequence Analysis'): Promise<NormalizedWorkbenchState | null> => {
+      return await analyzeSequence(cleanSequence, sequenceType, pipelineName, mutations, versionNumber);
     },
     [cleanSequence, sequenceType, mutations, versionNumber, analyzeSequence]
   );

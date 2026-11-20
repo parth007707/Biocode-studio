@@ -6,6 +6,7 @@ import { bioService } from '../../services/bioService';
 interface EditProjectModalProps {
   isOpen: boolean;
   project: Project;
+  userId?: string;
   onClose: () => void;
   onSuccess: (updated: Project) => void;
 }
@@ -13,6 +14,7 @@ interface EditProjectModalProps {
 export const EditProjectModal: React.FC<EditProjectModalProps> = ({
   isOpen,
   project,
+  userId,
   onClose,
   onSuccess
 }) => {
@@ -63,7 +65,7 @@ export const EditProjectModal: React.FC<EditProjectModalProps> = ({
         tags: tagsInput.split(',').map((t) => t.trim()).filter(Boolean),
         organism: organism.trim(),
         status
-      });
+      }, userId);
 
       onSuccess(updated);
       onClose();
@@ -75,22 +77,22 @@ export const EditProjectModal: React.FC<EditProjectModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="w-full max-w-lg bg-white border border-[#E2E8F0] rounded-2xl shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-        <div className="p-6 border-b border-[#E2E8F0] flex items-center justify-between">
+    <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
+      <div className="w-full max-w-lg bg-white border border-[#E2E8F0] rounded-2xl shadow-xl overflow-hidden flex flex-col max-h-[92dvh] animate-in fade-in zoom-in-95 duration-150">
+        <div className="p-4 sm:p-6 border-b border-[#E2E8F0] flex items-center justify-between shrink-0">
           <h3 className="text-base font-bold text-[#0F172A] flex items-center gap-2">
-            <FolderKanban className="w-5 h-5 text-[#0284C7]" />
-            Edit Project Metadata
+            <FolderKanban className="w-5 h-5 text-[#0284C7] shrink-0" />
+            <span>Edit Project Metadata</span>
           </h3>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"
+            className="p-1.5 rounded-lg text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="p-4 sm:p-6 space-y-4 overflow-y-auto">
           {errorMsg && (
             <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
@@ -166,18 +168,18 @@ export const EditProjectModal: React.FC<EditProjectModalProps> = ({
             />
           </div>
 
-          <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#E2E8F0]">
+          <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2.5 sm:gap-3 pt-4 border-t border-[#E2E8F0]">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2.5 rounded-xl bg-[#F1F5F9] text-[#475569] hover:bg-[#E2E8F0] hover:text-[#0F172A] text-xs font-medium transition-colors"
+              className="w-full sm:w-auto justify-center px-4 py-2.5 rounded-xl bg-[#F1F5F9] text-[#475569] hover:bg-[#E2E8F0] hover:text-[#0F172A] text-xs font-medium transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={submitting}
-              className="px-6 py-2.5 rounded-xl bg-[#0284C7] hover:bg-[#0369a1] text-white font-semibold text-xs transition-all shadow-xs disabled:opacity-50 flex items-center gap-2 cursor-pointer"
+              className="w-full sm:w-auto justify-center px-6 py-2.5 rounded-xl bg-[#0284C7] hover:bg-[#0369a1] text-white font-semibold text-xs transition-all shadow-xs disabled:opacity-50 flex items-center gap-2 cursor-pointer"
             >
               {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               <span>Save Changes</span>

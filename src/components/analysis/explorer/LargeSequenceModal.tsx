@@ -183,16 +183,16 @@ export const LargeSequenceModal: React.FC<LargeSequenceModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="bg-[#121722] border border-slate-700/90 w-full max-w-3xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
+      <div className="bg-[#121722] border border-slate-700/90 w-full max-w-3xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92dvh]">
         {/* Modal Header */}
-        <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/60">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-slate-800 border border-slate-700 text-teal-400">
+        <div className="px-4 sm:px-6 py-3.5 sm:py-4 border-b border-slate-800 flex items-start sm:items-center justify-between gap-2 bg-slate-900/60">
+          <div className="flex items-start sm:items-center gap-3 min-w-0">
+            <div className="p-2 rounded-xl bg-slate-800 border border-slate-700 text-teal-400 shrink-0">
               <Scissors className="w-5 h-5" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-bold text-white tracking-tight">
                   Select Region for Targeted Analysis
                 </span>
@@ -200,7 +200,7 @@ export const LargeSequenceModal: React.FC<LargeSequenceModalProps> = ({
                   Total: {formatLength(totalLength)}
                 </span>
               </div>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-slate-400 mt-0.5">
                 Scope analysis to specific loci, gene exons, promoters, or chromosomal coordinate windows.
               </p>
             </div>
@@ -209,14 +209,14 @@ export const LargeSequenceModal: React.FC<LargeSequenceModalProps> = ({
           <button
             onClick={onClose}
             disabled={fetching}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors cursor-pointer"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors cursor-pointer shrink-0"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 space-y-5 overflow-y-auto flex-1 text-xs">
+        <div className="p-4 sm:p-6 space-y-5 overflow-y-auto flex-1 text-xs">
           {/* Metadata Card */}
           <div className="bg-[#0A0E17] border border-slate-800/90 rounded-xl p-4 space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -305,7 +305,7 @@ export const LargeSequenceModal: React.FC<LargeSequenceModalProps> = ({
 
           {/* Range Selection Controls */}
           <div className="bg-[#0A0E17] border border-slate-800 rounded-xl p-4 space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="font-bold text-slate-200 flex items-center gap-1.5 uppercase font-mono tracking-wider text-xs">
                 <Sliders className="w-3.5 h-3.5 text-teal-400" />
                 <span>Coordinate Range Settings</span>
@@ -401,12 +401,12 @@ export const LargeSequenceModal: React.FC<LargeSequenceModalProps> = ({
         </div>
 
         {/* Modal Footer */}
-        <div className="px-6 py-4 border-t border-slate-800 bg-[#0A0E17] flex items-center justify-between gap-3">
+        <div className="px-4 sm:px-6 py-3.5 sm:py-4 border-t border-slate-800 bg-[#0A0E17] flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3">
           <button
             type="button"
             onClick={onClose}
             disabled={fetching}
-            className="px-4 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 text-xs font-mono transition-colors cursor-pointer"
+            className="w-full sm:w-auto px-4 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 text-xs font-mono transition-colors cursor-pointer text-center"
           >
             Cancel
           </button>
@@ -415,7 +415,7 @@ export const LargeSequenceModal: React.FC<LargeSequenceModalProps> = ({
             type="button"
             onClick={() => handleExecuteRangeFetch()}
             disabled={fetching || !isSpanValid}
-            className="px-6 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-semibold text-xs font-mono transition-all shadow-lg shadow-teal-900/30 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            className="w-full sm:w-auto px-4 sm:px-6 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-semibold text-xs font-mono transition-all shadow-lg shadow-teal-900/30 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
             {fetching ? (
               <>
@@ -424,8 +424,8 @@ export const LargeSequenceModal: React.FC<LargeSequenceModalProps> = ({
               </>
             ) : (
               <>
-                <span>Analyze Selected Region ({formatNumber(currentSpan)} bp)</span>
-                <ArrowRight className="w-4 h-4" />
+                <span className="truncate">Analyze Selected Region ({formatNumber(currentSpan)} bp)</span>
+                <ArrowRight className="w-4 h-4 shrink-0" />
               </>
             )}
           </button>

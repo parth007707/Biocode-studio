@@ -65,17 +65,17 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
 
   useEffect(() => {
     loadProjectData();
-  }, [projectId]);
+  }, [projectId, user?.id]);
 
   const loadProjectData = async () => {
     setLoading(true);
     try {
       const [proj, seqs, anas, vers, acts] = await Promise.all([
-        bioService.getProjectById(projectId),
-        bioService.getProjectSequences(projectId),
-        bioService.getProjectAnalyses(projectId),
-        bioService.getProjectVersions(projectId),
-        bioService.getProjectActivities(projectId)
+        bioService.getProjectById(projectId, user?.id),
+        bioService.getProjectSequences(projectId, user?.id),
+        bioService.getProjectAnalyses(projectId, user?.id),
+        bioService.getProjectVersions(projectId, user?.id),
+        bioService.getProjectActivities(projectId, user?.id)
       ]);
 
       setProject(proj);
@@ -95,12 +95,13 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
     if (!window.confirm(`Are you sure you want to archive "${project.name}"?`)) return;
 
     try {
-      const updated = await bioService.archiveProject(project.id);
+      const updated = await bioService.archiveProject(project.id, user?.id);
       setProject(updated);
       setActionMsg('Project archived successfully.');
       setTimeout(() => setActionMsg(null), 3000);
     } catch (err: any) {
-      alert(err.message || 'Failed to archive project.');
+      setActionMsg(err.message || 'Failed to archive project.');
+      setTimeout(() => setActionMsg(null), 3000);
     }
   };
 
@@ -109,12 +110,13 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
     if (!window.confirm(`Remove sequence ${accession} from project "${project.name}"? (Sequence will not be deleted from database)`)) return;
 
     try {
-      await bioService.removeSequenceFromProject(project.id, seqId);
+      await bioService.removeSequenceFromProject(project.id, seqId, user?.id);
       setActionMsg(`Sequence ${accession} removed from project.`);
       setTimeout(() => setActionMsg(null), 3000);
       loadProjectData();
     } catch (err: any) {
-      alert(err.message || 'Failed to remove sequence.');
+      setActionMsg(err.message || 'Failed to remove sequence.');
+      setTimeout(() => setActionMsg(null), 3000);
     }
   };
 
@@ -178,10 +180,10 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   const existingSeqIds = safeSequences.map((s) => s.id);
 
   return (
-    <div className="p-6 md:p-8 space-y-8 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 md:p-8 space-y-6 sm:space-y-8 max-w-7xl mx-auto">
       {/* Top Banner & Breadcrumb */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#E2E8F0] pb-6">
-        <div className="space-y-3">
+        <div className="space-y-3 min-w-0">
           <button
             onClick={onBackToList}
             className="flex items-center gap-2 text-xs font-semibold text-[#0284C7] hover:text-[#0369a1] transition-colors group cursor-pointer"
@@ -190,8 +192,8 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
             <span>Back to Projects Workspace</span>
           </button>
 
-          <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-2xl font-bold text-[#0F172A] tracking-tight">{project.name}</h1>
+          <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap">
+            <h1 className="text-xl sm:text-2xl font-bold text-[#0F172A] tracking-tight break-words">{project.name}</h1>
             <span
               className={`text-[10px] font-mono px-2.5 py-1 rounded-full border ${
                 project.status === 'Archived'
@@ -328,10 +330,10 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
       </div>
 
       {/* Main Tab Navigation */}
-      <div className="border-b border-[#E2E8F0] flex items-center gap-6">
+      <div className="border-b border-[#E2E8F0] flex items-center gap-4 sm:gap-6 overflow-x-auto no-scrollbar">
         <button
           onClick={() => setActiveTab('overview')}
-          className={`pb-3 text-xs font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
+          className={`pb-3 text-xs font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'overview'
               ? 'border-[#0284C7] text-[#0284C7]'
               : 'border-transparent text-[#64748B] hover:text-[#0F172A]'
@@ -343,7 +345,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
 
         <button
           onClick={() => setActiveTab('sequences')}
-          className={`pb-3 text-xs font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
+          className={`pb-3 text-xs font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'sequences'
               ? 'border-[#0284C7] text-[#0284C7]'
               : 'border-transparent text-[#64748B] hover:text-[#0F172A]'
@@ -355,7 +357,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
 
         <button
           onClick={() => setActiveTab('analyses')}
-          className={`pb-3 text-xs font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
+          className={`pb-3 text-xs font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'analyses'
               ? 'border-[#0284C7] text-[#0284C7]'
               : 'border-transparent text-[#64748B] hover:text-[#0F172A]'
@@ -367,7 +369,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
 
         <button
           onClick={() => setActiveTab('versions')}
-          className={`pb-3 text-xs font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
+          className={`pb-3 text-xs font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'versions'
               ? 'border-[#0284C7] text-[#0284C7]'
               : 'border-transparent text-[#64748B] hover:text-[#0F172A]'
@@ -379,7 +381,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
 
         <button
           onClick={() => setActiveTab('activity')}
-          className={`pb-3 text-xs font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
+          className={`pb-3 text-xs font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap shrink-0 ${
             activeTab === 'activity'
               ? 'border-[#0284C7] text-[#0284C7]'
               : 'border-transparent text-[#64748B] hover:text-[#0F172A]'
@@ -397,7 +399,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
             {/* Research Objective Card */}
-            <div className="p-6 rounded-2xl bg-white border border-[#E2E8F0] space-y-3 shadow-xs">
+            <div className="p-4 sm:p-6 rounded-2xl bg-white border border-[#E2E8F0] space-y-3 shadow-xs">
               <h3 className="text-sm font-bold text-[#0F172A] flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-[#0284C7]" />
                 <span>Research Objective</span>
@@ -409,8 +411,8 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
             </div>
 
             {/* Recent Sequences List */}
-            <div className="p-6 rounded-2xl bg-white border border-[#E2E8F0] space-y-4 shadow-xs">
-              <div className="flex items-center justify-between">
+            <div className="p-4 sm:p-6 rounded-2xl bg-white border border-[#E2E8F0] space-y-4 shadow-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-sm font-bold text-[#0F172A] flex items-center gap-2">
                   <Dna className="w-4 h-4 text-[#0284C7]" />
                   <span>Recent Project Sequences</span>
@@ -438,9 +440,9 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                   {safeSequences.slice(0, 4).map((seq) => (
                     <div
                       key={seq.id}
-                      className="p-3.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] hover:border-[#38BDF8] transition-all flex items-center justify-between gap-4"
+                      className="p-3.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] hover:border-[#38BDF8] transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4"
                     >
-                      <div className="truncate space-y-1">
+                      <div className="min-w-0 space-y-1">
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-mono font-bold text-[#0284C7]">{seq.accession}</span>
                           <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white text-[#475569] border border-[#CBD5E1]">
@@ -480,7 +482,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
 
           {/* Sidebar Metrics & Activity Summary */}
           <div className="space-y-6">
-            <div className="p-6 rounded-2xl bg-white border border-[#E2E8F0] space-y-4 shadow-xs">
+            <div className="p-4 sm:p-6 rounded-2xl bg-white border border-[#E2E8F0] space-y-4 shadow-xs">
               <h3 className="text-sm font-bold text-[#0F172A] flex items-center gap-2">
                 <Clock className="w-4 h-4 text-[#0284C7]" />
                 <span>Recent Activity</span>
@@ -509,8 +511,8 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
       {/* SEQUENCES TAB */}
       {activeTab === 'sequences' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between gap-4">
-            <div className="relative flex-1 max-w-md">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
+            <div className="relative flex-1 sm:max-w-md">
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#64748B]" />
               <input
                 type="text"
@@ -522,7 +524,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
             </div>
             <button
               onClick={() => setIsAddSeqModalOpen(true)}
-              className="px-4 py-2.5 rounded-xl bg-[#0284C7] hover:bg-[#0369a1] text-white font-semibold text-xs transition-all shadow-xs flex items-center gap-2 cursor-pointer shrink-0"
+              className="w-full sm:w-auto justify-center px-4 py-2.5 rounded-xl bg-[#0284C7] hover:bg-[#0369a1] text-white font-semibold text-xs transition-all shadow-xs flex items-center gap-2 cursor-pointer shrink-0"
             >
               <Plus className="w-4 h-4" />
               <span>Add Sequence to Project</span>
@@ -549,11 +551,11 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
               {filteredSequences.map((seq) => (
                 <div
                   key={seq.id}
-                  className="p-5 rounded-2xl bg-white border border-[#E2E8F0] hover:border-[#38BDF8] transition-all flex flex-col justify-between space-y-4 group shadow-xs"
+                  className="p-4 sm:p-5 rounded-2xl bg-white border border-[#E2E8F0] hover:border-[#38BDF8] transition-all flex flex-col justify-between space-y-4 group shadow-xs"
                 >
                   <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-mono font-bold text-[#0284C7]">{seq.accession}</span>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-mono font-bold text-[#0284C7] break-all">{seq.accession}</span>
                       <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#F1F5F9] text-[#475569] border border-[#CBD5E1]">
                         {seq.sequence_type || 'Genomic DNA'}
                       </span>
@@ -561,7 +563,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
 
                     <p className="text-xs font-medium text-[#0F172A] line-clamp-2">{seq.definition || seq.organism}</p>
 
-                    <div className="flex items-center gap-4 text-[11px] font-mono text-[#64748B] pt-1">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-mono text-[#64748B] pt-1">
                       <span>Organism: {seq.organism || 'Homo sapiens'}</span>
                       <span>•</span>
                       <span>
@@ -570,7 +572,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                     </div>
                   </div>
 
-                  <div className="pt-3 border-t border-[#E2E8F0] flex items-center justify-between">
+                  <div className="pt-3 border-t border-[#E2E8F0] flex flex-wrap items-center justify-between gap-2">
                     <button
                       onClick={() => handleRemoveSequence(seq.id, seq.accession)}
                       className="text-xs text-[#64748B] hover:text-red-600 transition-colors flex items-center gap-1 cursor-pointer"
@@ -691,10 +693,10 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
               {safeVersions.map((v) => (
                 <div
                   key={v.id}
-                  className="p-4 rounded-xl bg-white border border-[#E2E8F0] flex items-center justify-between gap-4 shadow-xs"
+                  className="p-4 rounded-xl bg-white border border-[#E2E8F0] flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-4 shadow-xs"
                 >
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
+                  <div className="space-y-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="text-xs font-mono font-bold text-[#0F172A]">{v.label}</span>
                       <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#F1F5F9] text-[#475569]">
                         {v.analysisType}
@@ -702,7 +704,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                     </div>
                     <p className="text-xs text-[#64748B]">{v.summary}</p>
                   </div>
-                  <div className="text-right text-[11px] font-mono text-[#64748B] shrink-0">
+                  <div className="text-left sm:text-right text-[11px] font-mono text-[#64748B] shrink-0">
                     {new Date(v.created_at).toLocaleDateString()}
                   </div>
                 </div>
@@ -714,7 +716,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
 
       {/* ACTIVITY TAB */}
       {activeTab === 'activity' && (
-        <div className="p-6 rounded-2xl bg-white border border-[#E2E8F0] space-y-6 shadow-xs">
+        <div className="p-4 sm:p-6 rounded-2xl bg-white border border-[#E2E8F0] space-y-6 shadow-xs">
           <h3 className="text-sm font-bold text-[#0F172A] flex items-center gap-2">
             <Clock className="w-4 h-4 text-[#0284C7]" />
             <span>Project Activity Timeline</span>
@@ -760,6 +762,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
       <EditProjectModal
         isOpen={isEditModalOpen}
         project={project}
+        userId={user?.id}
         onClose={() => setIsEditModalOpen(false)}
         onSuccess={(updated) => {
           setProject(updated);

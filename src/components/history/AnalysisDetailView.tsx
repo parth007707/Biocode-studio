@@ -255,7 +255,7 @@ export const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({
   // --------------------------------------------------------------------------
   if (loading) {
     return (
-      <div className="p-8 max-w-7xl mx-auto space-y-6 animate-pulse">
+      <div className="p-4 sm:p-8 max-w-7xl mx-auto space-y-6 animate-pulse">
         <div className="flex items-center justify-between">
           <div className="h-6 w-48 bg-[#E2E8F0] rounded-lg"></div>
           <div className="h-6 w-32 bg-[#E2E8F0] rounded-lg"></div>
@@ -279,7 +279,7 @@ export const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({
   // --------------------------------------------------------------------------
   if (error || !analysis) {
     return (
-      <div className="p-8 max-w-4xl mx-auto space-y-6">
+      <div className="p-4 sm:p-8 max-w-4xl mx-auto space-y-6">
         <button
           onClick={onBack}
           className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[#F1F5F9] hover:bg-[#E2E8F0] border border-[#CBD5E1] text-xs font-mono text-[#334155] transition-all cursor-pointer shadow-xs"
@@ -288,7 +288,7 @@ export const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({
           <span>Back to Analysis History</span>
         </button>
 
-        <div className="p-12 text-center bg-white border border-rose-200 rounded-2xl space-y-4 shadow-xs">
+        <div className="p-6 sm:p-12 text-center bg-white border border-rose-200 rounded-2xl space-y-4 shadow-xs">
           <div className="w-12 h-12 rounded-2xl bg-rose-50 border border-rose-200 flex items-center justify-center mx-auto text-rose-600">
             <AlertTriangle className="w-6 h-6" />
           </div>
@@ -328,7 +328,7 @@ export const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({
   const isLocal = analysis._is_local_fallback;
 
   return (
-    <div id="analysis-detail-view" className="p-6 md:p-8 space-y-6 max-w-7xl mx-auto">
+    <div id="analysis-detail-view" className="p-4 sm:p-6 md:p-8 space-y-6 max-w-7xl mx-auto">
       {/* Top Breadcrumb & Navigation */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-[#E2E8F0]">
         <button
@@ -340,7 +340,7 @@ export const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({
           <span>← Back to Analysis History</span>
         </button>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2">
           {fullSequence && onOpenWorkbench && (
             <button
               onClick={() => {
@@ -408,27 +408,27 @@ export const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({
       </div>
 
       {/* Main Header Display Card */}
-      <div className="bg-white border border-[#E2E8F0] rounded-2xl p-6 shadow-xs relative overflow-hidden">
+      <div className="bg-white border border-[#E2E8F0] rounded-2xl p-4 sm:p-6 shadow-xs relative overflow-hidden">
         {/* Subtle accent backdrop */}
         <div className="absolute top-0 right-0 w-96 h-96 bg-sky-500/5 rounded-full blur-3xl pointer-events-none" />
 
         <div className="relative space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2.5 min-w-0">
               <div className="w-10 h-10 rounded-xl bg-sky-50 border border-sky-200 flex items-center justify-center text-[#0284C7] shrink-0">
                 <Dna className="w-5 h-5" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <span className="text-[11px] font-mono uppercase tracking-wider text-[#64748B] block">
                   Analysis Pipeline
                 </span>
-                <h1 className="text-xl font-bold text-[#0F172A] tracking-tight">
+                <h1 className="text-lg sm:text-xl font-bold text-[#0F172A] tracking-tight break-words">
                   {pipeline}
                 </h1>
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className={`px-2.5 py-1 rounded-lg text-xs font-bold font-mono border ${
                 normalizedType === 'PROTEIN'
                   ? 'bg-purple-50 text-purple-700 border-purple-200'
@@ -579,58 +579,58 @@ export const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({
 
           {/* Primary Record Metadata Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-white border border-[#E2E8F0] rounded-2xl p-5 space-y-3 shadow-xs">
+            <div className="bg-white border border-[#E2E8F0] rounded-2xl p-4 sm:p-5 space-y-3 shadow-xs">
               <h3 className="text-xs font-bold font-mono text-[#0284C7] uppercase tracking-wider flex items-center gap-2">
                 <Database className="w-4 h-4" />
                 <span>Sequence Identification</span>
               </h3>
               <div className="space-y-2 font-mono text-xs divide-y divide-[#E2E8F0]">
-                <div className="flex justify-between pt-1">
+                <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5 pt-1">
                   <span className="text-[#64748B]">Accession:</span>
-                  <span className="text-[#0284C7] font-bold">{accession}</span>
+                  <span className="text-[#0284C7] font-bold break-all text-right">{accession}</span>
                 </div>
-                <div className="flex justify-between pt-2">
+                <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5 pt-2">
                   <span className="text-[#64748B]">Database Source:</span>
-                  <span className="text-[#0F172A]">{analysis.sequence_record?.source || analysis.input_source || 'Direct Input'}</span>
+                  <span className="text-[#0F172A] text-right">{analysis.sequence_record?.source || analysis.input_source || 'Direct Input'}</span>
                 </div>
-                <div className="flex justify-between pt-2">
+                <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5 pt-2">
                   <span className="text-[#64748B]">Organism:</span>
-                  <span className="text-[#0F172A] italic">{organism}</span>
+                  <span className="text-[#0F172A] italic text-right">{organism}</span>
                 </div>
-                <div className="flex justify-between pt-2">
+                <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5 pt-2">
                   <span className="text-[#64748B]">Molecule / Type:</span>
-                  <span className="text-[#0F172A]">{analysis.sequence_record?.molecule_type || analysis.sequence_type || 'DNA'}</span>
+                  <span className="text-[#0F172A] text-right">{analysis.sequence_record?.molecule_type || analysis.sequence_type || 'DNA'}</span>
                 </div>
-                <div className="flex justify-between pt-2">
+                <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5 pt-2">
                   <span className="text-[#64748B]">Topology:</span>
-                  <span className="text-[#0F172A] uppercase">{analysis.sequence_record?.topology || 'Linear'}</span>
+                  <span className="text-[#0F172A] uppercase text-right">{analysis.sequence_record?.topology || 'Linear'}</span>
                 </div>
               </div>
             </div>
 
-            <div className="bg-white border border-[#E2E8F0] rounded-2xl p-5 space-y-3 shadow-xs">
+            <div className="bg-white border border-[#E2E8F0] rounded-2xl p-4 sm:p-5 space-y-3 shadow-xs">
               <h3 className="text-xs font-bold font-mono text-[#0284C7] uppercase tracking-wider flex items-center gap-2">
                 <Microscope className="w-4 h-4" />
                 <span>Pipeline Execution Specs</span>
               </h3>
               <div className="space-y-2 font-mono text-xs divide-y divide-[#E2E8F0]">
-                <div className="flex justify-between pt-1">
+                <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5 pt-1">
                   <span className="text-[#64748B]">Analysis Pipeline:</span>
-                  <span className="text-[#0284C7] font-semibold">{pipeline}</span>
+                  <span className="text-[#0284C7] font-semibold text-right break-words">{pipeline}</span>
                 </div>
-                <div className="flex justify-between pt-2">
+                <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5 pt-2">
                   <span className="text-[#64748B]">Analysis Scope:</span>
-                  <span className="text-[#0F172A]">{analysis.analysis_scope || 'Complete Sequence'}</span>
+                  <span className="text-[#0F172A] text-right">{analysis.analysis_scope || 'Complete Sequence'}</span>
                 </div>
-                <div className="flex justify-between pt-2">
+                <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5 pt-2">
                   <span className="text-[#64748B]">Total Record Length:</span>
-                  <span className="text-[#0F172A] font-bold">{totalLength.toLocaleString()} {unit}</span>
+                  <span className="text-[#0F172A] font-bold text-right">{totalLength.toLocaleString()} {unit}</span>
                 </div>
-                <div className="flex justify-between pt-2">
+                <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5 pt-2">
                   <span className="text-[#64748B]">Bases Analyzed:</span>
-                  <span className="text-[#0F172A] font-bold">{analyzedLength.toLocaleString()} {unit}</span>
+                  <span className="text-[#0F172A] font-bold text-right">{analyzedLength.toLocaleString()} {unit}</span>
                 </div>
-                <div className="flex justify-between pt-2">
+                <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5 pt-2">
                   <span className="text-[#64748B]">Execution Status:</span>
                   <span className="text-emerald-700 font-bold flex items-center gap-1">
                     <CheckCircle2 className="w-3.5 h-3.5" />
@@ -827,15 +827,15 @@ export const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({
 
               {/* Search Matches Notification */}
               {seqSearchQuery.trim() && (
-                <div className="p-3 bg-sky-50 border border-sky-200 rounded-xl flex items-center justify-between font-mono text-xs text-[#0284C7]">
+                <div className="p-3 bg-sky-50 border border-sky-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 font-mono text-xs text-[#0284C7]">
                   <div className="flex items-center gap-2">
-                    <Search className="w-3.5 h-3.5 text-[#0284C7]" />
+                    <Search className="w-3.5 h-3.5 text-[#0284C7] shrink-0" />
                     <span>
                       Found <strong className="text-[#0F172A]">{searchMatches.length}</strong> occurrences of motif &quot;{seqSearchQuery.toUpperCase()}&quot;
                     </span>
                   </div>
                   {searchMatches.length > 0 && (
-                    <div className="flex items-center gap-1.5 overflow-x-auto max-w-md">
+                    <div className="flex items-center gap-1.5 overflow-x-auto max-w-full sm:max-w-md">
                       <span className="text-[11px] text-[#64748B]">Matches:</span>
                       {searchMatches.slice(0, 8).map((matchPos, i) => (
                         <button
@@ -902,7 +902,7 @@ export const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({
 
               {/* Bottom Pagination Bar */}
               {totalSeqPages > 1 && (
-                <div className="flex items-center justify-between font-mono text-xs pt-2">
+                <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-xs pt-2">
                   <span className="text-[#64748B]">
                     Showing Page <strong className="text-[#0F172A]">{currentPage}</strong> of <strong className="text-[#0F172A]">{totalSeqPages}</strong>
                   </span>
@@ -1078,7 +1078,7 @@ export const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-2 font-mono text-xs">
+                  <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
                     <div className="flex items-center gap-1 bg-[#F8FAFC] border border-[#CBD5E1] rounded-xl px-2.5 py-1">
                       <span className="text-[#64748B] text-[11px]">Strand:</span>
                       <select
@@ -1115,7 +1115,7 @@ export const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({
                 ) : (
                   <div className="border border-[#E2E8F0] rounded-xl overflow-hidden shadow-xs">
                     <div className="overflow-x-auto max-h-96">
-                      <table className="w-full text-left border-collapse text-xs font-mono">
+                      <table className="w-full min-w-[600px] text-left border-collapse text-xs font-mono">
                         <thead>
                           <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC] text-[11px] text-[#64748B] uppercase sticky top-0">
                             <th className="p-3">Frame</th>
@@ -1323,7 +1323,7 @@ export const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({
       {activeTab === 'metadata' && (
         <div className="space-y-6">
           <div className="bg-white border border-[#E2E8F0] rounded-2xl p-5 space-y-4 shadow-xs">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-xs font-bold font-mono text-[#0284C7] uppercase tracking-wider flex items-center gap-2">
                 <FileCode className="w-4 h-4" />
                 <span>Audit & Database Record Descriptors</span>
@@ -1339,40 +1339,40 @@ export const AnalysisDetailView: React.FC<AnalysisDetailViewProps> = ({
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 font-mono text-xs">
               <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-2">
-                <div className="flex justify-between">
+                <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5">
                   <span className="text-[#64748B]">Analysis Record ID:</span>
-                  <span className="text-[#0284C7] font-semibold select-all">{analysis.id}</span>
+                  <span className="text-[#0284C7] font-semibold select-all break-all text-right">{analysis.id}</span>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5">
                   <span className="text-[#64748B]">Sequence Record ID:</span>
-                  <span className="text-[#0F172A] select-all">{analysis.sequence_id || analysis.sequence_record?.id || 'Direct'}</span>
+                  <span className="text-[#0F172A] select-all break-all text-right">{analysis.sequence_id || analysis.sequence_record?.id || 'Direct'}</span>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5">
                   <span className="text-[#64748B]">Project ID:</span>
-                  <span className="text-[#0F172A]">{analysis.project_id || 'None (Global)'}</span>
+                  <span className="text-[#0F172A] break-all text-right">{analysis.project_id || 'None (Global)'}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-[#64748B]">User ID:</span>
-                  <span className="text-[#64748B]">{analysis.user_id || 'Anonymous / Legacy'}</span>
+                <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5">
+                  <span className="text-[#64748B]">Workspace Scope:</span>
+                  <span className="text-[#64748B] text-right">{analysis.user_id ? 'User-Scoped Record' : 'Public Workspace'}</span>
                 </div>
               </div>
 
               <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-2">
-                <div className="flex justify-between">
+                <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5">
                   <span className="text-[#64748B]">Created At:</span>
-                  <span className="text-[#0F172A]">{new Date(analysis.created_at).toISOString()}</span>
+                  <span className="text-[#0F172A] break-all text-right">{new Date(analysis.created_at).toISOString()}</span>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5">
                   <span className="text-[#64748B]">Updated At:</span>
-                  <span className="text-[#0F172A]">{new Date(analysis.updated_at).toISOString()}</span>
+                  <span className="text-[#0F172A] break-all text-right">{new Date(analysis.updated_at).toISOString()}</span>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5">
                   <span className="text-[#64748B]">Storage Backend:</span>
-                  <span className="text-emerald-700 font-bold">{isLocal ? 'Local Storage Fallback' : 'Supabase Cloud (PostgreSQL)'}</span>
+                  <span className="text-emerald-700 font-bold text-right">{isLocal ? 'Local Storage Fallback' : 'Supabase Cloud (PostgreSQL)'}</span>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5">
                   <span className="text-[#64748B]">RLS Enforcement:</span>
-                  <span className="text-emerald-700 font-semibold">Active (Public & User-Scoped)</span>
+                  <span className="text-emerald-700 font-semibold text-right">Active (Public & User-Scoped)</span>
                 </div>
               </div>
             </div>

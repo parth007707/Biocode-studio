@@ -53,8 +53,8 @@ export const AddSequenceModal: React.FC<AddSequenceModalProps> = ({
     setLoading(true);
     setErrorMsg(null);
     try {
-      // Force refresh sequence records from Supabase, retrieving all accessible repository records
-      const records = await bioService.getSequenceRecords(undefined, true);
+      // Force refresh sequence records scoped to the active visitor session
+      const records = await bioService.getSequenceRecords(userId, true);
       const safeRecords = Array.isArray(records) ? records : [];
       setAllSequences(safeRecords);
     } catch (err: any) {
@@ -75,7 +75,7 @@ export const AddSequenceModal: React.FC<AddSequenceModalProps> = ({
     setErrorMsg(null);
 
     try {
-      const ok = await bioService.addSequenceToProject(projectId, selectedSequenceId);
+      const ok = await bioService.addSequenceToProject(projectId, selectedSequenceId, userId);
       if (ok) {
         onSuccess();
         onClose();
@@ -205,7 +205,7 @@ export const AddSequenceModal: React.FC<AddSequenceModalProps> = ({
 
       if (res.data?.id) {
         const newSeqId = res.data.id;
-        const assocOk = await bioService.addSequenceToProject(projectId, newSeqId);
+        const assocOk = await bioService.addSequenceToProject(projectId, newSeqId, userId);
         if (!assocOk) {
           throw new Error('Sequence created in database, but failed to associate with project.');
         }
@@ -268,33 +268,33 @@ export const AddSequenceModal: React.FC<AddSequenceModalProps> = ({
   });
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="w-full max-w-2xl bg-white border border-[#E2E8F0] rounded-2xl shadow-xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-150">
+    <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
+      <div className="w-full max-w-2xl bg-white border border-[#E2E8F0] rounded-2xl shadow-xl overflow-hidden flex flex-col max-h-[92dvh] animate-in fade-in zoom-in-95 duration-150">
         {/* Modal Header */}
-        <div className="p-6 border-b border-[#E2E8F0] flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-sky-50 border border-sky-200 flex items-center justify-center text-[#0284C7]">
+        <div className="p-4 sm:p-6 border-b border-[#E2E8F0] flex items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-sky-50 border border-sky-200 flex items-center justify-center text-[#0284C7] shrink-0">
               <Dna className="w-5 h-5" />
             </div>
-            <div>
+            <div className="min-w-0">
               <h3 className="text-base font-bold text-[#0F172A] tracking-tight">Add Sequence to Project</h3>
-              <p className="text-xs text-[#64748B]">Associate an existing database sequence or import a new one</p>
+              <p className="text-xs text-[#64748B] truncate">Associate an existing database sequence or import a new one</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"
+            className="p-1.5 rounded-lg text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Tab Switcher */}
-        <div className="px-6 pt-4 border-b border-[#E2E8F0] flex items-center gap-4 shrink-0 flex-wrap">
+        <div className="px-4 sm:px-6 pt-3 sm:pt-4 border-b border-[#E2E8F0] flex items-center gap-4 shrink-0 overflow-x-auto no-scrollbar">
           <button
             type="button"
             onClick={() => setActiveTab('existing')}
-            className={`pb-3 text-xs font-medium border-b-2 transition-all cursor-pointer ${
+            className={`pb-3 text-xs font-medium border-b-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
               activeTab === 'existing'
                 ? 'border-[#38BDF8] text-[#0284C7] font-semibold'
                 : 'border-transparent text-[#64748B] hover:text-[#0F172A]'
@@ -305,7 +305,7 @@ export const AddSequenceModal: React.FC<AddSequenceModalProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('new')}
-            className={`pb-3 text-xs font-medium border-b-2 transition-all cursor-pointer ${
+            className={`pb-3 text-xs font-medium border-b-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
               activeTab === 'new'
                 ? 'border-[#38BDF8] text-[#0284C7] font-semibold'
                 : 'border-transparent text-[#64748B] hover:text-[#0F172A]'
@@ -316,7 +316,7 @@ export const AddSequenceModal: React.FC<AddSequenceModalProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('external')}
-            className={`pb-3 text-xs font-medium border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
+            className={`pb-3 text-xs font-medium border-b-2 transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
               activeTab === 'external'
                 ? 'border-[#38BDF8] text-[#0284C7] font-semibold'
                 : 'border-transparent text-[#64748B] hover:text-[#0F172A]'
@@ -329,14 +329,14 @@ export const AddSequenceModal: React.FC<AddSequenceModalProps> = ({
 
         {/* Error Notification */}
         {errorMsg && (
-          <div className="mx-6 mt-4 p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 flex items-center gap-2">
+          <div className="mx-4 sm:mx-6 mt-4 p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 flex items-center gap-2">
             <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
             <span>{errorMsg}</span>
           </div>
         )}
 
         {/* Tab Content */}
-        <div className="p-6 overflow-y-auto custom-scrollbar flex-1">
+        <div className="p-4 sm:p-6 overflow-y-auto custom-scrollbar flex-1">
           {activeTab === 'existing' ? (
             <div className="space-y-4">
               {/* Search Bar */}
@@ -378,7 +378,7 @@ export const AddSequenceModal: React.FC<AddSequenceModalProps> = ({
                       <div
                         key={seq.id}
                         onClick={() => setSelectedSequenceId(seq.id)}
-                        className={`p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
+                        className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
                           isSelected
                             ? 'bg-sky-50 border-[#38BDF8] text-[#0F172A] shadow-xs'
                             : 'bg-[#F8FAFC] border-[#E2E8F0] hover:border-[#CBD5E1] text-[#334155]'
@@ -392,8 +392,8 @@ export const AddSequenceModal: React.FC<AddSequenceModalProps> = ({
                           >
                             {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
                           </div>
-                          <div className="truncate space-y-0.5">
-                            <div className="flex items-center gap-2">
+                          <div className="min-w-0 space-y-0.5">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span className="text-xs font-mono font-bold text-[#0284C7] truncate">
                                 {seq.accession}
                               </span>
@@ -404,7 +404,7 @@ export const AddSequenceModal: React.FC<AddSequenceModalProps> = ({
                             <p className="text-[11px] text-[#64748B] truncate">{seq.definition || seq.organism}</p>
                           </div>
                         </div>
-                        <div className="text-right text-[11px] font-mono text-[#64748B] shrink-0 ml-4">
+                        <div className="text-left sm:text-right text-[11px] font-mono text-[#64748B] shrink-0 pl-7 sm:pl-0 sm:ml-4">
                           {(seq.total_length || 0).toLocaleString()} {seq.sequence_type === 'PROTEIN' ? 'aa' : 'bp'}
                         </div>
                       </div>
@@ -413,11 +413,11 @@ export const AddSequenceModal: React.FC<AddSequenceModalProps> = ({
                 </div>
               )}
 
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#E2E8F0]">
+              <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2.5 sm:gap-3 pt-4 border-t border-[#E2E8F0]">
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-2 rounded-xl bg-[#F1F5F9] text-[#475569] hover:bg-[#E2E8F0] hover:text-[#0F172A] text-xs font-medium transition-colors"
+                  className="w-full sm:w-auto justify-center px-4 py-2 rounded-xl bg-[#F1F5F9] text-[#475569] hover:bg-[#E2E8F0] hover:text-[#0F172A] text-xs font-medium transition-colors"
                 >
                   Cancel
                 </button>
@@ -425,7 +425,7 @@ export const AddSequenceModal: React.FC<AddSequenceModalProps> = ({
                   type="button"
                   onClick={handleAddExisting}
                   disabled={!selectedSequenceId || submitting}
-                  className="px-5 py-2 rounded-xl bg-[#0284C7] hover:bg-[#0369a1] text-white font-semibold text-xs transition-all disabled:opacity-50 flex items-center gap-2 cursor-pointer shadow-xs"
+                  className="w-full sm:w-auto justify-center px-5 py-2 rounded-xl bg-[#0284C7] hover:bg-[#0369a1] text-white font-semibold text-xs transition-all disabled:opacity-50 flex items-center gap-2 cursor-pointer shadow-xs"
                 >
                   {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   <span>Associate Selected Sequence</span>
@@ -486,9 +486,9 @@ export const AddSequenceModal: React.FC<AddSequenceModalProps> = ({
               </div>
 
               <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <label className="block text-xs font-medium text-[#334155]">Sequence Data (FASTA or Raw) *</label>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {rawSequence.trim().startsWith('>') && (
                       <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-sky-50 text-[#0284C7] border border-sky-200 font-semibold">
                         ✓ FASTA Format Detected
@@ -511,18 +511,18 @@ export const AddSequenceModal: React.FC<AddSequenceModalProps> = ({
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#E2E8F0]">
+              <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2.5 sm:gap-3 pt-4 border-t border-[#E2E8F0]">
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-2 rounded-xl bg-[#F1F5F9] text-[#475569] hover:bg-[#E2E8F0] hover:text-[#0F172A] text-xs font-medium transition-colors"
+                  className="w-full sm:w-auto justify-center px-4 py-2 rounded-xl bg-[#F1F5F9] text-[#475569] hover:bg-[#E2E8F0] hover:text-[#0F172A] text-xs font-medium transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="px-5 py-2 rounded-xl bg-[#0284C7] hover:bg-[#0369a1] text-white font-semibold text-xs transition-all shadow-xs disabled:opacity-50 flex items-center gap-2 cursor-pointer"
+                  className="w-full sm:w-auto justify-center px-5 py-2 rounded-xl bg-[#0284C7] hover:bg-[#0369a1] text-white font-semibold text-xs transition-all shadow-xs disabled:opacity-50 flex items-center gap-2 cursor-pointer"
                 >
                   {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   <span>Import & Associate Sequence</span>

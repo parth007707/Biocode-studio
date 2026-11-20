@@ -31,17 +31,17 @@ export const StructureSuperpositionPanel: React.FC<StructureSuperpositionPanelPr
   }
 
   return (
-    <div className={`bg-[#0B0F17] border border-slate-800 rounded-2xl p-5 space-y-4 font-sans ${className}`}>
+    <div className={`bg-[#0B0F17] border border-slate-800 rounded-2xl p-3.5 sm:p-5 space-y-4 font-sans ${className}`}>
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3 border-b border-slate-800 pb-3">
         <div className="flex items-center gap-2">
-          <Layers className="w-4 h-4 text-emerald-400" />
+          <Layers className="w-4 h-4 text-emerald-400 shrink-0" />
           <h4 className="text-xs font-bold text-white tracking-wide uppercase font-mono">
             3D Structural Superposition & Backbone RMSD
           </h4>
         </div>
 
-        <div className={`px-2.5 py-1 rounded-lg border text-xs font-mono font-semibold flex items-center gap-1.5 ${stabilityColor}`}>
+        <div className={`px-2.5 py-1 rounded-lg border text-xs font-mono font-semibold flex flex-wrap items-center gap-1.5 ${stabilityColor}`}>
           <Activity className="w-3.5 h-3.5" />
           <span>RMSD: {rmsd.toFixed(2)} Å</span>
           <span className="text-[10px] opacity-80">({stabilityLabel})</span>
@@ -86,7 +86,7 @@ export const StructureSuperpositionPanel: React.FC<StructureSuperpositionPanelPr
               <div
                 key={idx}
                 onClick={() => onFocusResidue?.(shift.residueIndex)}
-                className="p-2.5 flex items-center justify-between hover:bg-slate-800/40 transition-colors cursor-pointer"
+                className="p-2.5 flex flex-wrap items-center justify-between gap-2 hover:bg-slate-800/40 transition-colors cursor-pointer"
               >
                 <div className="flex items-center gap-2">
                   <span className="text-slate-500 font-mono text-[10px] w-6">#{shift.residueIndex + 1}</span>
@@ -95,7 +95,7 @@ export const StructureSuperpositionPanel: React.FC<StructureSuperpositionPanelPr
                   <span className="text-emerald-400 font-bold">{shift.modifiedResName}</span>
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 sm:gap-3">
                   <span className="text-slate-400">
                     Δ: <strong className="text-white">{shift.caDeltaAngstrom.toFixed(2)} Å</strong>
                   </span>

@@ -51,9 +51,9 @@ export const CategoryHubView: React.FC<CategoryHubViewProps> = ({
   );
 
   return (
-    <div className="p-6 md:p-8 space-y-6 max-w-5xl mx-auto">
+    <div className="p-4 sm:p-6 md:p-8 space-y-5 sm:space-y-6 max-w-5xl mx-auto">
       {/* 5-Step Workflow Guide Banner */}
-      <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 md:p-6 shadow-[0_4px_20px_rgba(15,23,42,0.05)]">
+      <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 sm:p-5 md:p-6 shadow-[0_4px_20px_rgba(15,23,42,0.05)]">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="space-y-1.5 max-w-2xl">
             <div className="flex items-center gap-2">
@@ -69,7 +69,7 @@ export const CategoryHubView: React.FC<CategoryHubViewProps> = ({
             </p>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={onOpenFastaImport}
@@ -90,7 +90,7 @@ export const CategoryHubView: React.FC<CategoryHubViewProps> = ({
         </div>
 
         {/* 5-Step Visual Flow */}
-        <div className="mt-5 pt-4 border-t border-[#E2E8F0] grid grid-cols-2 md:grid-cols-5 gap-2 text-xs font-mono">
+        <div className="mt-5 pt-4 border-t border-[#E2E8F0] grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2 text-xs font-mono">
           {[
             { step: '1', title: 'Select Source', desc: 'NCBI, UniProt, PDB' },
             { step: '2', title: 'Search', desc: 'Gene or Accession' },
@@ -113,7 +113,7 @@ export const CategoryHubView: React.FC<CategoryHubViewProps> = ({
 
       {/* Database Categories Grid */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-xs font-bold uppercase tracking-wider text-[#475569]">
             Step 1: Select a Biological Database
           </h3>
@@ -128,30 +128,30 @@ export const CategoryHubView: React.FC<CategoryHubViewProps> = ({
             return (
               <div
                 key={category.id}
-                className="bg-white border border-[#E2E8F0] hover:border-[#38BDF8]/60 rounded-xl p-5 flex flex-col justify-between transition-all group shadow-2xs"
+                className="bg-white border border-[#E2E8F0] hover:border-[#38BDF8]/60 rounded-xl p-4 sm:p-5 flex flex-col justify-between transition-all group shadow-2xs"
               >
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <div className="p-2 rounded-lg bg-[rgba(56,189,248,0.12)] text-[#0284C7] border border-[#38BDF8]/30">
+                  <div className="flex items-start sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="p-2 rounded-lg bg-[rgba(56,189,248,0.12)] text-[#0284C7] border border-[#38BDF8]/30 shrink-0">
                         <CatIcon className="w-4 h-4" />
                       </div>
-                      <div>
-                        <h4 className="text-sm font-bold text-[#0F172A] group-hover:text-[#0284C7] transition-colors">
+                      <div className="min-w-0">
+                        <h4 className="text-sm font-bold text-[#0F172A] group-hover:text-[#0284C7] transition-colors truncate">
                           {category.name}
                         </h4>
-                        <p className="text-[11px] font-mono text-[#64748B]">
+                        <p className="text-[11px] font-mono text-[#64748B] truncate">
                           {category.shortDesc}
                         </p>
                       </div>
                     </div>
-                    <span className="text-[10px] font-mono text-[#475569] bg-[#F1F5F9] px-2 py-0.5 rounded">
+                    <span className="text-[10px] font-mono text-[#475569] bg-[#F1F5F9] px-2 py-0.5 rounded shrink-0">
                       {category.sources.length} {category.sources.length === 1 ? 'index' : 'indexes'}
                     </span>
                   </div>
 
                   {/* Sub-sources pill links */}
-                  <div className="grid grid-cols-2 gap-1.5 pt-1">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-1">
                     {category.sources.map((source) => (
                       <button
                         key={source.id}
@@ -189,8 +189,8 @@ export const CategoryHubView: React.FC<CategoryHubViewProps> = ({
       </div>
 
       {/* Featured Accessions Presets */}
-      <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 space-y-3 shadow-2xs">
-        <div className="flex items-center justify-between">
+      <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 sm:p-5 space-y-3 shadow-2xs">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-[#0284C7]" />
             <h3 className="text-xs font-bold uppercase tracking-wider text-[#0F172A]">

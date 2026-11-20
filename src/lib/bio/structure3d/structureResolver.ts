@@ -1,14 +1,15 @@
 import { ResolvedStructure3D } from './types';
 import { SequenceType } from '../types';
-import { parsePDBText } from './pdbParser';
+import { parseStructureText } from './pdbParser';
+import { parseBiologicalInput } from '../sequenceParser';
 import { SequenceMutation } from '../editor/types';
-import { generateProteinStructure3D, generateDnaStructure3D, generateRnaStructure3D, generateMutatedHomologyPdb } from './structureGenerator';
 import { buildSequenceToStructureMapping } from './residueMapping';
 
 export interface StructureResolutionOptions {
   sequence: string;
   sequenceType: SequenceType;
   accessionOrPdbId?: string;
+  preferredPdbId?: string;
   sequenceId?: string;
   sequenceVersion?: string;
   sequenceHash?: string;
@@ -20,16 +21,14 @@ export interface StructureResolutionOptions {
   originalSequence?: string;
   templatePdbId?: string;
   templatePdbText?: string;
+  autoPredict?: boolean;
 }
 
-// Client-side cache keyed by sequenceHash
 const structureCache = new Map<string, ResolvedStructure3D>();
 
-/**
- * Fast client-side hash calculation for sequence cache keys
- */
 export function computeClientSequenceHash(sequence: string): string {
-  const clean = sequence.toUpperCase().replace(/[^A-Z]/g, '');
+  const parsed = parseBiologicalInput(sequence);
+  const clean = parsed.sequence.replace(/[^A-Z]/g, '');
   let hash = 0;
   for (let i = 0; i < clean.length; i++) {
     const char = clean.charCodeAt(i);
@@ -39,63 +38,188 @@ export function computeClientSequenceHash(sequence: string): string {
   return `hash_${Math.abs(hash).toString(16)}_${clean.length}`;
 }
 
+function extractAccessionFromFastaHeader(header: string): string | undefined {
+  if (!header) return undefined;
+  const spMatch = header.match(/\b(?:sp|tr)\|([A-Z0-9]{6,10})\|/i);
+  if (spMatch) return spMatch[1].toUpperCase();
+  const ncbiMatch = header.match(/\b((?:NM|NP|XM|XP|NR|XR|NC|WP|YP|AP)_[0-9]+(?:\.[0-9]+)?)\b/i);
+  if (ncbiMatch) return ncbiMatch[1].toUpperCase();
+  const pdbMatch = header.match(/\bpdb\|([0-9][A-Z0-9]{3})/i);
+  if (pdbMatch) return pdbMatch[1].toUpperCase();
+  return undefined;
+}
+
 /**
- * Main Resolution Engine: Communicates with backend structure prediction & PDB service
- * Always derived from active biological sequence
+ * Hydrate a backend StructureResolutionResult payload into a full parsed ResolvedStructure3D
+ * with validated atomic coordinates, alignment metrics, and sequence-to-residue mapping.
+ */
+function hydrateServerStructure(
+  serverStruct: any,
+  cleanSeq: string,
+  normalizedSeqType: SequenceType,
+  sequenceId: string,
+  sequenceVersion: string,
+  seqHash: string,
+  accessionOrPdbId: string | undefined,
+  mutations: SequenceMutation[]
+): ResolvedStructure3D {
+  if (!serverStruct || serverStruct.structureType === 'UNAVAILABLE' || !serverStruct.pdbText) {
+    return {
+      id: serverStruct?.id || `struct_unavail_${seqHash.slice(0, 8)}`,
+      title: `No verified structure available (${accessionOrPdbId || 'Target'})`,
+      source: 'RCSB_PDB',
+      macromoleculeType: (serverStruct?.detectedPolymerType && serverStruct.detectedPolymerType !== 'UNKNOWN')
+        ? serverStruct.detectedPolymerType
+        : normalizedSeqType,
+      structureType: 'UNAVAILABLE',
+      classification: 'Unavailable',
+      sourceName: 'None',
+      confidenceInfo: serverStruct?.confidence || {
+        metric: 'Status',
+        value: 'No verified structure available',
+        description: 'No matching experimental structure (RCSB PDB) or AlphaFold DB model was found.'
+      },
+      predictionAvailable: Boolean(serverStruct?.predictionAvailable),
+      predictionReason: serverStruct?.predictionReason,
+      targetProteinSequence: serverStruct?.targetProteinSequence,
+      translatedFromNucleotide: Boolean(serverStruct?.translatedFromNucleotide),
+      nucleotideAccession: serverStruct?.nucleotideAccession,
+      ncbiProteinAccession: serverStruct?.ncbiProteinAccession,
+      uniprotAccession: serverStruct?.uniprotAccession,
+      modificationRelation: serverStruct?.modificationRelation,
+      candidateStructures: serverStruct?.candidateStructures || [],
+      chains: [],
+      allAtoms: [],
+      ligands: [],
+      disulfideBonds: [],
+      secondaryStructureSummary: {
+        helixCount: 0, sheetCount: 0, coilCount: 0,
+        helixPercent: 0, sheetPercent: 0, coilPercent: 0
+      },
+      parsedAtomCount: 0,
+      invalidAtomCount: 0,
+      parsedResiduesCount: 0,
+      sequenceId,
+      sequenceVersion,
+      sequenceHash: seqHash,
+      sequenceLength: cleanSeq.length,
+      isOutdated: false,
+      boundingBox: { min: [0, 0, 0], max: [0, 0, 0], center: [0, 0, 0], size: [0, 0, 0], radius: 0 }
+    };
+  }
+
+  const parsed = parseStructureText(
+    serverStruct.pdbText,
+    serverStruct.sourceId || accessionOrPdbId || '3D_MODEL',
+    serverStruct.structureFormat
+  );
+
+  parsed.structureType = serverStruct.structureType;
+  parsed.classification = serverStruct.classification || (serverStruct.structureType === 'PREDICTED' ? 'Predicted' : 'Experimental');
+  parsed.source = serverStruct.source === 'AlphaFold DB'
+    ? 'ALPHAFOLD_DB'
+    : (serverStruct.source?.includes('ESMFold') || serverStruct.source?.includes('Prediction Service')
+      ? 'AB_INITIO_PREDICTION'
+      : 'RCSB_PDB');
+  parsed.sourceName = serverStruct.source;
+  parsed.sourceId = serverStruct.sourceId;
+  parsed.matchedChainId = serverStruct.matchedChainId || serverStruct.coverageInfo?.chain;
+  parsed.sequenceIdentity = serverStruct.sequenceIdentity ?? serverStruct.coverageInfo?.sequenceIdentity;
+  parsed.missingRegions = serverStruct.missingRegions || serverStruct.coverageInfo?.unresolvedRegions || [];
+  parsed.candidateStructures = serverStruct.candidateStructures || [];
+  parsed.targetProteinSequence = serverStruct.targetProteinSequence;
+  parsed.translatedFromNucleotide = Boolean(serverStruct.translatedFromNucleotide);
+  parsed.nucleotideAccession = serverStruct.nucleotideAccession;
+  parsed.ncbiProteinAccession = serverStruct.ncbiProteinAccession;
+  parsed.uniprotAccession = serverStruct.uniprotAccession;
+  parsed.modificationRelation = serverStruct.modificationRelation;
+  parsed.predictionAvailable = serverStruct.predictionAvailable;
+  parsed.predictionReason = serverStruct.predictionReason;
+  parsed.resolutionText = serverStruct.resolution;
+  parsed.experimentalMethod = serverStruct.experimentalMethod || parsed.experimentalMethod;
+  parsed.predictionMethod = serverStruct.predictionMethod;
+  parsed.confidenceInfo = serverStruct.confidence;
+  if (serverStruct.confidence?.metric === 'pLDDT' && typeof serverStruct.confidence?.value === 'number') {
+    parsed.pLddtAvg = serverStruct.confidence.value;
+  }
+  parsed.coverageInfo = serverStruct.coverageInfo;
+  parsed.sequenceId = sequenceId;
+  parsed.sequenceVersion = sequenceVersion;
+  parsed.sequenceHash = serverStruct.sequenceHash || seqHash;
+  parsed.sequenceLength = serverStruct.sequenceLength || cleanSeq.length;
+  parsed.isOutdated = false;
+  parsed.generatedAt = serverStruct.generatedAt || new Date().toISOString();
+
+  const mappingTargetSeq = serverStruct.targetProteinSequence || cleanSeq;
+  parsed.residueMapping = buildSequenceToStructureMapping(mappingTargetSeq, parsed);
+  tagMutationsOnStructure(parsed, mutations);
+
+  return parsed;
+}
+
+/**
+ * Main Resolution Engine: Queries genuine RCSB PDB / AlphaFold DB / UniProt / NCBI CDS backend.
+ * Never fabricates idealized helices or artificial coordinates.
  */
 export async function resolveMacromolecularStructure(
   options: StructureResolutionOptions
 ): Promise<ResolvedStructure3D> {
-  const { 
-    sequence, 
-    sequenceType, 
-    accessionOrPdbId, 
+  const {
+    sequence,
+    sequenceType,
+    accessionOrPdbId,
+    preferredPdbId,
     sequenceId = 'seq_active',
-    sequenceVersion = 'v1', 
-    mutations = [], 
-    title,
+    sequenceVersion = 'v1',
+    mutations = [],
     useCache = true,
-    allowSequenceDerivedFallback = true,
     onProgress,
     originalSequence,
     templatePdbId,
-    templatePdbText
+    templatePdbText,
+    autoPredict = false
   } = options;
 
-  const cleanSeq = sequence.toUpperCase().replace(/[^A-Z]/g, '');
+  const parsedInput = parseBiologicalInput(sequence);
+  const cleanSeq = parsedInput.sequence.replace(/[^A-Z]/g, '');
+  const resolvedAccession = accessionOrPdbId?.trim() || extractAccessionFromFastaHeader(parsedInput.header);
   const normalizedSeqType: SequenceType = ((sequenceType as string) || 'PROTEIN').toUpperCase().trim() as SequenceType;
   const seqHash = computeClientSequenceHash(cleanSeq);
-  const cacheKey = `${seqHash}_${sequenceVersion}_${mutations.length}_${accessionOrPdbId || ''}_${normalizedSeqType}_${templatePdbId || ''}_${allowSequenceDerivedFallback}`;
+  const cleanOrig = originalSequence ? parseBiologicalInput(originalSequence).sequence.replace(/[^A-Z]/g, '') : '';
+  const origHash = cleanOrig ? computeClientSequenceHash(cleanOrig) : '';
+  const mutSig = (mutations || [])
+    .map((m) => `${m.position}:${m.original || ''}>${m.modified || ''}:${m.operation || ''}`)
+    .join(';');
+  const cacheKey = `${seqHash}_${sequenceVersion}_${mutSig}_${origHash}_${resolvedAccession || ''}_${preferredPdbId || ''}_${normalizedSeqType}_${templatePdbId || ''}_${autoPredict ? 'pred' : 'nopred'}`;
 
   if (useCache && structureCache.has(cacheKey)) {
-    const cached = structureCache.get(cacheKey)!;
-    return cached;
+    return structureCache.get(cacheKey)!;
   }
 
-  onProgress?.('Preparing active sequence...');
+  onProgress?.('Querying NCBI CDS, UniProt, RCSB PDB & AlphaFold DB...');
 
   try {
-    onProgress?.('Querying RCSB PDB & Structure Engine...');
-    
-    // Call the dedicated backend structure service in browser environment
-    if (typeof window !== 'undefined' && window.location?.origin) {
-      const resolveApiUrl = `${window.location.origin}/api/structure/resolve`;
-      const response = await fetch(resolveApiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+    const apiBase = typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : 'http://localhost:3000';
+    const resolveApiUrl = `${apiBase}/api/structure/resolve`;
+
+    const response = await fetch(resolveApiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        sequence: cleanSeq,
+        sequence: parsedInput.header ? `>${parsedInput.header}\n${cleanSeq}` : cleanSeq,
         sequenceId,
         sequenceVersion,
         sequenceHash: seqHash,
-        accession: accessionOrPdbId,
+        accession: resolvedAccession,
+        preferredPdbId,
         sequenceType: normalizedSeqType,
-        allowSequenceDerivedFallback,
-        originalSequence,
+        allowSequenceDerivedFallback: false,
+        originalSequence: cleanOrig || undefined,
         templatePdbId,
         templatePdbText,
+        autoPredict,
         mutations: mutations.map(m => ({
           position: m.position,
           original: m.original,
@@ -108,395 +232,144 @@ export async function resolveMacromolecularStructure(
     });
 
     if (response.ok) {
-      onProgress?.('Resolving atomic coordinates...');
+      onProgress?.('Parsing atomic coordinates & validating alignment...');
       const data = await response.json();
       if (data.ok && data.structure) {
-        // CASE: STRUCTURE UNAVAILABLE
-        if (data.structure.structureType === 'UNAVAILABLE') {
-          // If we have template PDB text locally, perform client-side comparative mutagenesis
-          if (templatePdbText && mutations.length > 0) {
-            onProgress?.('Generating structural model from template...');
-            const { pdbText: mutatedPdb, modeledCount, modeledPositions } = generateMutatedHomologyPdb(
-              templatePdbText,
-              mutations,
-              templatePdbId || 'TEMPLATE'
-            );
-            const parsed = parsePDBText(mutatedPdb, `${templatePdbId || 'MODEL'}-MOD`);
-            const startRes = parsed.chains?.[0]?.residues?.[0]?.resSeq || 1;
-            const endRes = parsed.chains?.[0]?.residues?.[parsed.chains[0].residues.length - 1]?.resSeq || cleanSeq.length;
-            const coveredCount = parsed.chains?.[0]?.residues?.length || 0;
-            const covPct = Number(((coveredCount / cleanSeq.length) * 100).toFixed(1));
-            const isPartial = covPct < 95.0 || startRes > 3 || endRes < cleanSeq.length - 3;
-            parsed.structureType = 'PREDICTED';
-            parsed.sourceName = `Homology Mutation Model (Template: ${templatePdbId || 'Base Structure'})`;
-            parsed.sourceId = `${templatePdbId || 'MODEL'}-MOD`;
-            parsed.predictionMethod = `Template-Based Homology Modeling (Point Mutagenesis on ${templatePdbId || 'Template Coordinates'})`;
-            parsed.coverageInfo = {
-              startResSeq: startRes,
-              endResSeq: endRes,
-              coveredResiduesCount: coveredCount,
-              totalSequenceLength: cleanSeq.length,
-              coveragePercent: covPct,
-              isPartial,
-              unresolvedRegions: [],
-              chain: parsed.chains?.[0]?.id || 'A'
-            };
-            parsed.confidenceInfo = {
-              metric: 'Homology Modeling',
-              value: `Template ${templatePdbId || 'Model'} (${modeledCount}/${mutations.length} mutations in 3D model)`,
-              description: modeledCount > 0
-                ? `Derived from template crystal structure with ${modeledCount} mutation(s) modeled inside coordinates (${modeledPositions.join(', ')}). ${mutations.length - modeledCount} mutation(s) are outside structure coverage (Unmodeled).`
-                : `Derived from template structure. All ${mutations.length} mutations fall outside the partial structure coordinates (${startRes}–${endRes}) and are tracked honestly as Unmodeled.`
-            };
-            parsed.sequenceId = sequenceId;
-            parsed.sequenceVersion = sequenceVersion;
-            parsed.sequenceHash = seqHash;
-            parsed.sequenceLength = cleanSeq.length;
-            parsed.isOutdated = false;
-            parsed.residueMapping = buildSequenceToStructureMapping(cleanSeq, parsed);
-            tagMutationsOnStructure(parsed, mutations);
-            structureCache.set(cacheKey, parsed);
-            onProgress?.('Structure Ready');
-            return parsed;
-          }
-
-          // If sequence-derived schematic fallback is allowed and length is within reasonable visual boundary
-          if (allowSequenceDerivedFallback && cleanSeq.length >= 4 && cleanSeq.length <= 4000) {
-            onProgress?.('Generating idealized molecular schematic...');
-            let schematic: ResolvedStructure3D;
-            if (normalizedSeqType === 'DNA') {
-              schematic = generateDnaStructure3D(cleanSeq, accessionOrPdbId ? `B-DNA Helix (${accessionOrPdbId})` : 'B-DNA Double Helix Model');
-              schematic.structureType = 'SEQUENCE_DERIVED';
-              schematic.sourceName = 'Idealized B-DNA Molecular Schematic';
-              schematic.sourceId = 'B-DNA-SCHEMATIC';
-              schematic.predictionMethod = 'Idealized Double Helix Geometric Schematic (Right-Handed B-Form)';
-              schematic.confidenceInfo = {
-                metric: 'Model Provenance',
-                value: 'Idealized Molecular Schematic (Non-Experimental)',
-                description: 'Idealized stereochemical schematic for visualization. This is NOT an experimentally determined 3D structure or predicted folded conformation. A sequence alone does not determine exact 3D structure without experimental crystallization.'
-              };
-              schematic.coverageInfo = {
-                startResSeq: 1,
-                endResSeq: cleanSeq.length,
-                coveredResiduesCount: cleanSeq.length,
-                totalSequenceLength: cleanSeq.length,
-                coveragePercent: 100,
-                isPartial: false,
-                unresolvedRegions: [],
-                chain: 'A/B'
-              };
-            } else if (normalizedSeqType === 'RNA') {
-              schematic = generateRnaStructure3D(cleanSeq, undefined, accessionOrPdbId ? `RNA Fold (${accessionOrPdbId})` : 'RNA Tertiary Folded Model');
-              schematic.structureType = 'SEQUENCE_DERIVED';
-              schematic.sourceName = 'Idealized A-Form RNA Molecular Schematic';
-              schematic.sourceId = 'RNA-SCHEMATIC';
-              schematic.predictionMethod = 'Idealized RNA Tertiary Fold Schematic (A-Form)';
-              schematic.confidenceInfo = {
-                metric: 'Model Provenance',
-                value: 'Idealized Molecular Schematic (Non-Experimental)',
-                description: 'Idealized stereochemical schematic for visualization. This is NOT an experimentally determined 3D structure or predicted folded conformation. A sequence alone does not determine exact 3D structure.'
-              };
-              schematic.coverageInfo = {
-                startResSeq: 1,
-                endResSeq: cleanSeq.length,
-                coveredResiduesCount: cleanSeq.length,
-                totalSequenceLength: cleanSeq.length,
-                coveragePercent: 100,
-                isPartial: false,
-                unresolvedRegions: [],
-                chain: 'A'
-              };
-            } else {
-              schematic = generateProteinStructure3D(cleanSeq, undefined, accessionOrPdbId ? `Protein Fold (${accessionOrPdbId})` : 'Sequence-Derived Protein Model');
-              schematic.structureType = 'SEQUENCE_DERIVED';
-              schematic.sourceName = 'Sequence-Derived Molecular Schematic (Not Experimental)';
-              schematic.sourceId = 'SEQ-SCHEMATIC';
-              schematic.predictionMethod = 'Algorithmic Secondary Structure Fold (Ramachandran-Constrained Backbone)';
-              schematic.confidenceInfo = {
-                metric: 'Model Provenance',
-                value: 'Idealized Molecular Schematic',
-                description: 'Algorithmic secondary fold model for exploratory sequence visualization. Not an experimentally determined 3D structure or predicted folded conformation. A sequence alone does not determine exact 3D structure.'
-              };
-              schematic.coverageInfo = {
-                startResSeq: 1,
-                endResSeq: cleanSeq.length,
-                coveredResiduesCount: cleanSeq.length,
-                totalSequenceLength: cleanSeq.length,
-                coveragePercent: 100,
-                isPartial: false,
-                unresolvedRegions: [],
-                chain: 'A'
-              };
-            }
-            schematic.sequenceId = sequenceId;
-            schematic.sequenceVersion = sequenceVersion;
-            schematic.sequenceHash = seqHash;
-            schematic.sequenceLength = cleanSeq.length;
-            schematic.isOutdated = false;
-            schematic.residueMapping = buildSequenceToStructureMapping(cleanSeq, schematic);
-            tagMutationsOnStructure(schematic, mutations);
-            structureCache.set(cacheKey, schematic);
-            onProgress?.('Structure Ready');
-            return schematic;
-          }
-
-          const unavail: ResolvedStructure3D = {
-            id: data.structure.id || `struct_unavail_${seqHash.slice(0, 8)}`,
-            title: `Structure Unavailable (${accessionOrPdbId || 'Custom Target'})`,
-            source: 'none' as any,
-            macromoleculeType: normalizedSeqType,
-            structureType: 'UNAVAILABLE',
-            sourceName: 'None',
-            confidenceInfo: data.structure.confidence,
-            chains: [],
-            allAtoms: [],
-            ligands: [],
-            disulfideBonds: [],
-            secondaryStructureSummary: { helixCount: 0, sheetCount: 0, coilCount: 0, helixPercent: 0, sheetPercent: 0, coilPercent: 0 },
-            sequenceId,
-            sequenceVersion,
-            sequenceHash: seqHash,
-            sequenceLength: cleanSeq.length,
-            isOutdated: false,
-            boundingBox: { min: [0, 0, 0], max: [0, 0, 0], center: [0, 0, 0], size: [0, 0, 0], radius: 0 }
-          };
-          structureCache.set(cacheKey, unavail);
-          onProgress?.('Structure Unavailable');
-          return unavail;
-        }
-
-        // CASE: REAL PDB COORDINATES LOADED
-        if (data.structure.pdbText) {
-          onProgress?.('Rendering 3D macromolecular canvas...');
-          const parsed = parsePDBText(
-            data.structure.pdbText,
-            data.structure.sourceId || accessionOrPdbId || '3D_MODEL'
-          );
-
-          // Populate genuine provenance and synchronization metadata
-          parsed.structureType = data.structure.structureType;
-          parsed.sourceName = data.structure.source;
-          parsed.sourceId = data.structure.sourceId;
-          parsed.resolutionText = data.structure.resolution;
-          parsed.experimentalMethod = data.structure.experimentalMethod;
-          parsed.predictionMethod = data.structure.predictionMethod;
-          parsed.confidenceInfo = data.structure.confidence;
-          parsed.coverageInfo = data.structure.coverageInfo;
-          parsed.sequenceId = sequenceId;
-          parsed.sequenceVersion = sequenceVersion;
-          parsed.sequenceHash = data.structure.sequenceHash || seqHash;
-          parsed.sequenceLength = cleanSeq.length;
-          parsed.isOutdated = false;
-          parsed.generatedAt = data.structure.generatedAt || new Date().toISOString();
-
-          // Construct genuine sequence position -> structure residue mapping
-          parsed.residueMapping = buildSequenceToStructureMapping(cleanSeq, parsed);
-
-          // Tag tracked mutations
-          tagMutationsOnStructure(parsed, mutations);
-
-          structureCache.set(cacheKey, parsed);
-          onProgress?.('Structure Ready');
-          return parsed;
-        }
+        const hydrated = hydrateServerStructure(
+          data.structure,
+          cleanSeq,
+          normalizedSeqType,
+          sequenceId,
+          sequenceVersion,
+          seqHash,
+          resolvedAccession,
+          mutations
+        );
+        structureCache.set(cacheKey, hydrated);
+        onProgress?.(hydrated.structureType === 'UNAVAILABLE' ? 'No verified structure available' : 'Structure Ready');
+        return hydrated;
       }
     }
-  }
   } catch (err) {
-    console.warn('[StructureResolver] Backend resolution error, falling back to client engine:', err);
-    if (templatePdbText && mutations.length > 0) {
-      onProgress?.('Generating structural model from template...');
-      const { pdbText: mutatedPdb, modeledCount, modeledPositions } = generateMutatedHomologyPdb(
-        templatePdbText,
-        mutations,
-        templatePdbId || 'TEMPLATE'
-      );
-      const parsed = parsePDBText(mutatedPdb, `${templatePdbId || 'MODEL'}-MOD`);
-      const startRes = parsed.chains?.[0]?.residues?.[0]?.resSeq || 1;
-      const endRes = parsed.chains?.[0]?.residues?.[parsed.chains[0].residues.length - 1]?.resSeq || cleanSeq.length;
-      const coveredCount = parsed.chains?.[0]?.residues?.length || 0;
-      const covPct = Number(((coveredCount / cleanSeq.length) * 100).toFixed(1));
-      const isPartial = covPct < 95.0 || startRes > 3 || endRes < cleanSeq.length - 3;
-
-      parsed.structureType = 'PREDICTED';
-      parsed.sourceName = `Homology Mutation Model (Template: ${templatePdbId || 'Base Structure'})`;
-      parsed.sourceId = `${templatePdbId || 'MODEL'}-MOD`;
-      parsed.predictionMethod = `Template-Based Homology Modeling (Point Mutagenesis on ${templatePdbId || 'Template Coordinates'})`;
-      parsed.coverageInfo = {
-        startResSeq: startRes,
-        endResSeq: endRes,
-        coveredResiduesCount: coveredCount,
-        totalSequenceLength: cleanSeq.length,
-        coveragePercent: covPct,
-        isPartial,
-        unresolvedRegions: [],
-        chain: parsed.chains?.[0]?.id || 'A'
-      };
-      parsed.confidenceInfo = {
-        metric: 'Homology Modeling',
-        value: `Template ${templatePdbId || 'Model'} (${modeledCount}/${mutations.length} mutations in 3D model)`,
-        description: modeledCount > 0
-          ? `Derived from template crystal structure with ${modeledCount} mutation(s) modeled inside coordinates (${modeledPositions.join(', ')}). ${mutations.length - modeledCount} mutation(s) are outside structure coverage (Unmodeled).`
-          : `Derived from template structure. All ${mutations.length} mutations fall outside the partial structure coordinates (${startRes}–${endRes}) and are tracked honestly as Unmodeled.`
-      };
-      parsed.sequenceId = sequenceId;
-      parsed.sequenceVersion = sequenceVersion;
-      parsed.sequenceHash = seqHash;
-      parsed.sequenceLength = cleanSeq.length;
-      parsed.isOutdated = false;
-      parsed.residueMapping = buildSequenceToStructureMapping(cleanSeq, parsed);
-      tagMutationsOnStructure(parsed, mutations);
-      structureCache.set(cacheKey, parsed);
-      onProgress?.('Structure Ready');
-      return parsed;
-    }
+    console.warn('[StructureResolver] Backend structure resolution error:', err);
   }
 
-  // Client Fallback: If 4-character PDB code is specified, fetch directly from RCSB
-  const pdbCodeMatch = accessionOrPdbId?.match(/\b([0-9][a-zA-Z0-9]{3})\b/);
+  // Fallback direct RCSB PDB fetch ONLY if target is an explicit 4-character PDB ID
+  const explicitId = (preferredPdbId || resolvedAccession || '').trim();
+  const pdbCodeMatch = explicitId.match(/^([0-9][a-zA-Z0-9]{3})$/i);
   if (pdbCodeMatch) {
     const candidatePdbId = pdbCodeMatch[1].toUpperCase();
-    try {
-      onProgress?.(`Fetching PDB ${candidatePdbId} from RCSB...`);
-      const url = `https://files.rcsb.org/download/${candidatePdbId}.pdb`;
-      const res = await fetch(url);
-      if (res.ok) {
-        const pdbText = await res.text();
-        const parsed = parsePDBText(pdbText, candidatePdbId);
-        parsed.structureType = 'EXPERIMENTAL';
-        parsed.sourceName = 'RCSB PDB';
-        parsed.sourceId = candidatePdbId;
-        parsed.sequenceId = sequenceId;
-        parsed.sequenceVersion = sequenceVersion;
-        parsed.sequenceHash = seqHash;
-        parsed.sequenceLength = cleanSeq.length;
-        parsed.isOutdated = false;
-        tagMutationsOnStructure(parsed, mutations);
-        structureCache.set(cacheKey, parsed);
-        onProgress?.('Structure Ready');
-        return parsed;
-      }
-    } catch {}
+    const direct = await fetchPdbFromRcsb(candidatePdbId);
+    if (direct) {
+      structureCache.set(cacheKey, direct);
+      return direct;
+    }
   }
 
-  // If user did NOT allow sequence-derived fallback, return UNAVAILABLE
-  if (!allowSequenceDerivedFallback) {
-    const unavail: ResolvedStructure3D = {
-      id: `struct_unavail_${seqHash.slice(0, 8)}`,
-      title: `Structure Unavailable (${accessionOrPdbId || 'Custom Target'})`,
-      source: 'none' as any,
-      macromoleculeType: normalizedSeqType,
-      structureType: 'UNAVAILABLE',
-      sourceName: 'None',
-      confidenceInfo: {
-        metric: 'Status',
-        value: 'Structure Unavailable',
-        description: 'No experimentally determined or supported predicted structure is available for this sequence.'
-      },
-      chains: [],
-      allAtoms: [],
-      ligands: [],
-      disulfideBonds: [],
-      secondaryStructureSummary: { helixCount: 0, sheetCount: 0, coilCount: 0, helixPercent: 0, sheetPercent: 0, coilPercent: 0 },
-      sequenceId,
-      sequenceVersion,
-      sequenceHash: seqHash,
-      sequenceLength: cleanSeq.length,
-      isOutdated: false,
-      boundingBox: { min: [0, 0, 0], max: [0, 0, 0], center: [0, 0, 0], size: [0, 0, 0], radius: 0 }
-    };
-    structureCache.set(cacheKey, unavail);
-    onProgress?.('Structure Unavailable');
-    return unavail;
-  }
-
-  // Final fallback: Sequence-derived visualization (ONLY when explicitly allowed)
-  onProgress?.('Generating sequence-derived 3D model...');
-  let parsed: ResolvedStructure3D;
-  if (normalizedSeqType === 'DNA') {
-    parsed = generateDnaStructure3D(cleanSeq, accessionOrPdbId ? `DNA Helix (${accessionOrPdbId})` : 'B-DNA Double Helix Model');
-    parsed.structureType = 'SEQUENCE_DERIVED';
-    parsed.sourceName = 'Algorithmic B-DNA Geometric Engine';
-    parsed.sourceId = 'B-DNA Double Helix';
-    parsed.predictionMethod = 'Stereochemical Double Helix Generation (Right-Handed B-Form)';
-    parsed.coverageInfo = {
-      startResSeq: 1,
-      endResSeq: cleanSeq.length,
-      coveredResiduesCount: cleanSeq.length,
-      totalSequenceLength: cleanSeq.length,
-      coveragePercent: 100,
-      isPartial: false,
-      unresolvedRegions: [],
-      chain: 'A/B'
-    };
-  } else if (normalizedSeqType === 'RNA') {
-    parsed = generateRnaStructure3D(cleanSeq, undefined, accessionOrPdbId ? `RNA Fold (${accessionOrPdbId})` : 'RNA Tertiary Folded Model');
-    parsed.structureType = 'SEQUENCE_DERIVED';
-    parsed.sourceName = 'RNA Secondary Structure 3D Fold Engine';
-    parsed.sourceId = 'A-Form RNA Fold';
-    parsed.predictionMethod = 'Thermodynamic Secondary Fold with A-Form Coordinates';
-    parsed.coverageInfo = {
-      startResSeq: 1,
-      endResSeq: cleanSeq.length,
-      coveredResiduesCount: cleanSeq.length,
-      totalSequenceLength: cleanSeq.length,
-      coveragePercent: 100,
-      isPartial: false,
-      unresolvedRegions: [],
-      chain: 'A'
-    };
-  } else {
-    parsed = generateProteinStructure3D(cleanSeq, undefined, accessionOrPdbId ? `Protein Fold (${accessionOrPdbId})` : 'Sequence-Derived Protein Model');
-    parsed.structureType = 'SEQUENCE_DERIVED';
-    parsed.sourceName = 'Algorithmic Geometric Engine';
-    parsed.sourceId = 'Ramachandran-Constrained Model';
-    parsed.predictionMethod = 'Algorithmic Secondary Structure Fold (Ramachandran-Constrained Backbone)';
-    parsed.confidenceInfo = {
-      metric: 'Model Type',
-      value: 'Sequence-Derived Visualization',
-      description: 'Algorithmic geometric model based on secondary structure propensities. Not an experimental crystal structure or predicted structure.'
-    };
-    parsed.coverageInfo = {
-      startResSeq: 1,
-      endResSeq: cleanSeq.length,
-      coveredResiduesCount: cleanSeq.length,
-      totalSequenceLength: cleanSeq.length,
-      coveragePercent: 100,
-      isPartial: false,
-      unresolvedRegions: [],
-      chain: 'A'
-    };
-  }
-
-  parsed.sequenceId = sequenceId;
-  parsed.sequenceVersion = sequenceVersion;
-  parsed.sequenceHash = seqHash;
-  parsed.sequenceLength = cleanSeq.length;
-  parsed.isOutdated = false;
-  tagMutationsOnStructure(parsed, mutations);
-  structureCache.set(cacheKey, parsed);
-  onProgress?.('Structure Ready');
-  return parsed;
+  const unavail = hydrateServerStructure(null, cleanSeq, normalizedSeqType, sequenceId, sequenceVersion, seqHash, resolvedAccession, mutations);
+  onProgress?.('No verified structure available');
+  return unavail;
 }
 
 /**
- * Direct RCSB PDB fetch helper for custom user lookups
+ * Trigger genuine on-demand ESMFold v1 prediction workflow when verified structures are unavailable.
+ */
+export async function runOnDemandStructurePrediction(
+  options: StructureResolutionOptions
+): Promise<ResolvedStructure3D> {
+  const parsedInput = parseBiologicalInput(options.sequence);
+  const cleanSeq = parsedInput.sequence.replace(/[^A-Z]/g, '');
+  const resolvedAccession = options.accessionOrPdbId?.trim() || extractAccessionFromFastaHeader(parsedInput.header);
+  const normalizedSeqType: SequenceType = ((options.sequenceType as string) || 'PROTEIN').toUpperCase().trim() as SequenceType;
+  const seqHash = computeClientSequenceHash(cleanSeq);
+  const apiBase = typeof window !== 'undefined' && window.location?.origin
+    ? window.location.origin
+    : 'http://localhost:3000';
+
+  options.onProgress?.('Submitting prediction job...');
+  const startRes = await fetch(`${apiBase}/api/structure/predict`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sequence: cleanSeq,
+      sequenceId: options.sequenceId || 'seq_pred',
+      sequenceVersion: options.sequenceVersion || 'v1',
+      accession: resolvedAccession,
+      sequenceType: normalizedSeqType
+    })
+  });
+
+  if (!startRes.ok) {
+    throw new Error(`Failed to start prediction job (HTTP ${startRes.status})`);
+  }
+
+  const { job } = await startRes.json();
+  const jobId = job?.jobId;
+  if (!jobId) {
+    throw new Error('Prediction job did not return a job identifier.');
+  }
+
+  for (let attempt = 0; attempt < 40; attempt++) {
+    await new Promise(r => setTimeout(r, 1000));
+    const pollRes = await fetch(`${apiBase}/api/structure/jobs/${encodeURIComponent(jobId)}`);
+    if (!pollRes.ok) continue;
+    const pollData = await pollRes.json();
+    const currentJob = pollData.job;
+    if (currentJob?.phase) options.onProgress?.(currentJob.phase);
+    if (currentJob?.status === 'completed' && currentJob.structure) {
+      return hydrateServerStructure(
+        currentJob.structure,
+        cleanSeq,
+        normalizedSeqType,
+        options.sequenceId || 'seq_pred',
+        options.sequenceVersion || 'v1',
+        seqHash,
+        options.accessionOrPdbId,
+        options.mutations || []
+      );
+    }
+    if (currentJob?.status === 'failed') {
+      throw new Error(currentJob.error || 'Structure prediction job failed.');
+    }
+  }
+
+  throw new Error('Structure prediction timed out waiting for ESMFold response.');
+}
+
+/**
+ * Direct RCSB PDB / mmCIF fetch helper for explicit PDB lookups
  */
 export async function fetchPdbFromRcsb(pdbId: string): Promise<ResolvedStructure3D | null> {
   const cleanId = pdbId.trim().toUpperCase();
   try {
-    const url = `https://files.rcsb.org/download/${cleanId}.pdb`;
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const pdbText = await res.text();
-    if (!pdbText.includes('ATOM') && !pdbText.includes('HETATM')) return null;
-    const parsed = parsePDBText(pdbText, cleanId);
-    parsed.structureType = 'EXPERIMENTAL';
-    parsed.sourceName = 'RCSB PDB Archive';
-    parsed.sourceId = cleanId;
-    parsed.experimentalMethod = 'X-ray Diffraction / Cryo-EM';
-    parsed.isOutdated = false;
-    return parsed;
+    const pdbRes = await fetch(`https://files.rcsb.org/download/${cleanId}.pdb`);
+    if (pdbRes.ok) {
+      const pdbText = await pdbRes.text();
+      if (pdbText.includes('ATOM') || pdbText.includes('HETATM')) {
+        const parsed = parseStructureText(pdbText, cleanId, 'PDB');
+        parsed.structureType = 'EXPERIMENTAL';
+        parsed.classification = 'Experimental';
+        parsed.sourceName = 'RCSB PDB';
+        parsed.sourceId = cleanId;
+        parsed.experimentalMethod = parsed.experimentalMethod || 'X-ray Diffraction / Cryo-EM';
+        parsed.isOutdated = false;
+        return parsed;
+      }
+    }
+    const cifRes = await fetch(`https://files.rcsb.org/download/${cleanId}.cif`);
+    if (cifRes.ok) {
+      const cifText = await cifRes.text();
+      if (cifText.includes('_atom_site.')) {
+        const parsed = parseStructureText(cifText, cleanId, 'mmCIF');
+        parsed.structureType = 'EXPERIMENTAL';
+        parsed.classification = 'Experimental';
+        parsed.sourceName = 'RCSB PDB';
+        parsed.sourceId = cleanId;
+        parsed.isOutdated = false;
+        return parsed;
+      }
+    }
+    return null;
   } catch (err) {
     console.error(`[fetchPdbFromRcsb] Failed to fetch ${cleanId}:`, err);
     return null;
@@ -504,10 +377,7 @@ export async function fetchPdbFromRcsb(pdbId: string): Promise<ResolvedStructure
 }
 
 /**
- * Annotate residue nodes with mutation tracking metadata (highlighted in RED in viewer)
- * Follows strict scientific honesty:
- * Only tags a residue if resSeq strictly equals mutation position.
- * Never matches by array index (which causes partial structures to tag wrong residues).
+ * Annotate residue nodes with mutation tracking metadata using alignment mapping when available
  */
 export function tagMutationsOnStructure(
   structure: ResolvedStructure3D,
@@ -515,7 +385,6 @@ export function tagMutationsOnStructure(
 ): void {
   if (!structure.chains || structure.chains.length === 0) return;
 
-  // Clean all previous mutation flags first
   for (const chain of structure.chains) {
     for (const res of chain.residues) {
       res.isMutated = false;
@@ -526,10 +395,14 @@ export function tagMutationsOnStructure(
 
   if (!mutations || mutations.length === 0) return;
 
+  const preferredChain = structure.matchedChainId || structure.coverageInfo?.chain;
+  const targetToChainResSeq = structure.coverageInfo?.targetToChainResSeq;
+
   for (const chain of structure.chains) {
+    if (preferredChain && chain.id !== preferredChain) continue;
     for (const mut of mutations) {
-      // ONLY match if PDB residue number matches the biological sequence position
-      const res = chain.residues.find((r) => r.resSeq === mut.position);
+      const pdbResSeq = targetToChainResSeq?.[mut.position] ?? mut.position;
+      const res = chain.residues.find((r) => r.resSeq === pdbResSeq);
       if (res) {
         res.isMutated = true;
         const op = (mut.operation || 'substitution').toUpperCase();

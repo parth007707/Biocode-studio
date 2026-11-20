@@ -39,7 +39,7 @@ export const RecentResearchActivity: React.FC<RecentResearchActivityProps> = ({
 
   return (
     <section className="space-y-3">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-xs font-[800] font-mono uppercase tracking-wider text-slate-800 flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-amber-500 shadow-xs" />
           <span>RECENT RESEARCH &amp; ACTIVITY</span>
@@ -57,7 +57,7 @@ export const RecentResearchActivity: React.FC<RecentResearchActivityProps> = ({
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Real Activity List (~65%) */}
-        <div className="lg:col-span-8 bg-white border border-slate-200/90 rounded-2xl p-5 shadow-sm flex flex-col justify-between">
+        <div className="lg:col-span-8 bg-white border border-slate-200/90 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-col justify-between min-w-0">
           <div className="text-xs font-[800] font-mono uppercase text-slate-800 tracking-wide pb-2 border-b border-slate-100 flex items-center justify-between">
             <span>Recent Analysis Records</span>
             <span className="text-[10px] text-slate-500 font-semibold lowercase">last 3–5 runs</span>
@@ -76,7 +76,7 @@ export const RecentResearchActivity: React.FC<RecentResearchActivityProps> = ({
           ) : (
             <div className="divide-y divide-slate-100">
               {recentList.map((rec) => {
-                const accession = rec.sequence_record?.accession || 'NP_000537';
+                const accession = rec.sequence_record?.accession || rec.input_source || 'Custom Sequence';
                 const seqType = rec.sequence_record?.sequence_type || 'Protein';
                 const dateStr = rec.created_at 
                   ? new Date(rec.created_at).toLocaleDateString(undefined, {
@@ -91,29 +91,29 @@ export const RecentResearchActivity: React.FC<RecentResearchActivityProps> = ({
                   <div
                     key={rec.id}
                     onClick={() => onSelectAnalysis(rec.id)}
-                    className="py-3 px-2 flex items-center justify-between gap-4 hover:bg-slate-50 rounded-xl transition-all cursor-pointer group"
+                    className="py-3 px-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 hover:bg-slate-50 rounded-xl transition-all cursor-pointer group"
                   >
-                    <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="flex items-center gap-3 min-w-0">
                       <div className="w-9 h-9 rounded-xl bg-sky-50 border border-sky-200 flex items-center justify-center text-sky-700 shrink-0 group-hover:scale-105 transition-transform shadow-2xs">
                         <Activity className="w-4 h-4 text-sky-600" />
                       </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs sm:text-sm font-bold font-mono text-slate-900 group-hover:text-sky-700 transition-colors truncate">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs sm:text-sm font-bold font-mono text-slate-900 group-hover:text-sky-700 transition-colors truncate max-w-full">
                             {rec.analysis_type || rec.result_summary || 'Sequence Analysis'}
                           </span>
-                          <span className="text-[10px] font-mono font-bold text-sky-800 bg-sky-50 px-2 py-0.5 rounded border border-sky-200 shadow-2xs">
+                          <span className="text-[10px] font-mono font-bold text-sky-800 bg-sky-50 px-2 py-0.5 rounded border border-sky-200 shadow-2xs shrink-0">
                             {accession}
                           </span>
                         </div>
-                        <div className="text-xs font-mono font-medium text-slate-500 mt-0.5">
+                        <div className="text-xs font-mono font-medium text-slate-500 mt-0.5 truncate">
                           {rec.analysis_scope || 'Standard Analysis'} · {seqType}
                         </div>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-3 shrink-0 font-mono text-xs">
-                      <span className="text-xs font-medium text-slate-500 hidden sm:inline">
+                    <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 font-mono text-xs pl-12 sm:pl-0">
+                      <span className="text-xs font-medium text-slate-500">
                         {dateStr}
                       </span>
                       <span className="inline-flex items-center gap-1.5 text-xs text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-300 font-bold shadow-2xs">
@@ -129,7 +129,7 @@ export const RecentResearchActivity: React.FC<RecentResearchActivityProps> = ({
         </div>
 
         {/* Small Research Activity Chart (~35%) */}
-        <div className="lg:col-span-4 bg-white border border-slate-200/90 rounded-2xl p-5 shadow-sm flex flex-col justify-between">
+        <div className="lg:col-span-4 bg-white border border-slate-200/90 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-col justify-between min-w-0">
           <div className="space-y-1">
             <h3 className="text-xs font-[800] font-mono uppercase text-slate-800 tracking-wider flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-sky-500 shadow-xs" />

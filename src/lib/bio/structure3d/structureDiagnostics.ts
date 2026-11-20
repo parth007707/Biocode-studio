@@ -101,7 +101,7 @@ export async function diagnoseStructurePipeline(
     mutations = [],
     rawPdbText,
     existingStructure,
-    allowSequenceDerivedFallback = true
+    allowSequenceDerivedFallback = false
   } = options;
 
   const errors: string[] = [];

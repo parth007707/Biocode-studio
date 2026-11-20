@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase/client';
+import { supabase, isSupabaseConfigured, getActiveSupabaseUserId, getOrCreateGuestScopeId } from '../lib/supabase/client';
 import { 
   AiConversation, 
   AiMessage, 
@@ -6,12 +6,33 @@ import {
   AiContextType 
 } from '../types';
 
-const LOCAL_STORAGE_CONVERSATIONS_KEY = 'biocode_ai_conversations_v1';
+const LOCAL_STORAGE_CONVERSATIONS_BASE = 'biocode_ai_conversations_v1';
 const LOCAL_STORAGE_MESSAGES_PREFIX = 'biocode_ai_messages_';
 
-// In-memory fallback cache
-let memoryConversations: AiConversation[] = [];
-let memoryMessages: Record<string, AiMessage[]> = {};
+function isValidUUID(str?: string | null): boolean {
+  if (!str || typeof str !== 'string') return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str.trim());
+}
+
+async function resolveAiScope(explicitUserId?: string | null): Promise<{ cloudUserId: string | null; localScopeId: string }> {
+  let cloudUserId: string | null = null;
+  if (isValidUUID(explicitUserId)) {
+    cloudUserId = explicitUserId!.trim();
+  } else if (isSupabaseConfigured) {
+    const activeUid = await getActiveSupabaseUserId();
+    if (isValidUUID(activeUid)) cloudUserId = activeUid;
+  }
+  const localScopeId = cloudUserId || getOrCreateGuestScopeId();
+  return { cloudUserId, localScopeId };
+}
+
+function getScopedConversationsKey(scopeId: string): string {
+  return `${LOCAL_STORAGE_CONVERSATIONS_BASE}_${scopeId}`;
+}
+
+// In-memory fallback cache keyed by scope
+const memoryConversationsByScope: Record<string, AiConversation[]> = {};
+const memoryMessages: Record<string, AiMessage[]> = {};
 
 export class AiService {
   /**
@@ -114,7 +135,7 @@ export class AiService {
   }
 
   /**
-   * Create a new conversation (Supabase with Local Fallback)
+   * Create a new conversation (Supabase with isolated per-visitor Fallback)
    */
   async createConversation(
     userId?: string | null,
@@ -126,10 +147,11 @@ export class AiService {
   ): Promise<AiConversation> {
     const newId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `conv_${Date.now()}`;
     const timestamp = new Date().toISOString();
+    const { cloudUserId, localScopeId } = await resolveAiScope(userId);
 
     const conversationObj: AiConversation = {
       id: newId,
-      user_id: userId || undefined,
+      user_id: cloudUserId || undefined,
       project_id: projectId,
       sequence_id: sequenceId,
       title,
@@ -140,77 +162,90 @@ export class AiService {
       messages: []
     };
 
-    try {
-      const { data, error } = await supabase
-        .from('ai_conversations')
-        .insert({
-          id: newId,
-          user_id: userId || null,
-          project_id: projectId || null,
-          sequence_id: sequenceId || null,
-          title,
-          context_type: contextType,
-          context_summary: contextSummary || {},
-        })
-        .select()
-        .single();
+    if (isSupabaseConfigured && cloudUserId) {
+      try {
+        const { data, error } = await supabase
+          .from('ai_conversations')
+          .insert({
+            id: newId,
+            user_id: cloudUserId,
+            project_id: isValidUUID(projectId) ? projectId : null,
+            sequence_id: isValidUUID(sequenceId) ? sequenceId : null,
+            title,
+            context_type: contextType,
+            context_summary: contextSummary || {},
+          })
+          .select()
+          .single();
 
-      if (!error && data) {
-        return {
-          ...data,
-          messages: []
-        };
+        if (!error && data) {
+          return {
+            ...data,
+            messages: []
+          };
+        }
+      } catch (err) {
+        console.warn('[AiService] Supabase conversation save fallback to local memory:', err);
       }
-    } catch (err) {
-      console.warn('[AiService] Supabase conversation save fallback to local memory:', err);
     }
 
-    // Local / In-memory Fallback
-    memoryConversations.unshift(conversationObj);
-    this.saveLocalConversations(memoryConversations);
+    // Scoped Local / In-memory Fallback
+    const existing = this.getLocalConversations(localScopeId);
+    const updated = [conversationObj, ...existing.filter(c => c.id !== conversationObj.id)];
+    this.saveLocalConversations(updated, localScopeId);
     return conversationObj;
   }
 
   /**
-   * Fetch user's conversations
+   * Fetch visitor's conversations (cloud scoped by auth.uid() when available, otherwise isolated per-visitor local scope)
    */
   async getConversations(userId?: string | null): Promise<AiConversation[]> {
-    try {
-      const { data, error } = await supabase
-        .from('ai_conversations')
-        .select('*')
-        .order('updated_at', { ascending: false });
+    const { cloudUserId, localScopeId } = await resolveAiScope(userId);
 
-      if (!error && data && Array.isArray(data)) {
-        return data;
+    if (isSupabaseConfigured && cloudUserId) {
+      try {
+        const { data, error } = await supabase
+          .from('ai_conversations')
+          .select('*')
+          .eq('user_id', cloudUserId)
+          .order('updated_at', { ascending: false });
+
+        if (!error && data && Array.isArray(data)) {
+          return data;
+        }
+      } catch (err) {
+        console.warn('[AiService] Fetching conversations from Supabase failed, reading local store:', err);
       }
-    } catch (err) {
-      console.warn('[AiService] Fetching conversations from Supabase failed, reading local store:', err);
     }
 
-    // Read local fallback
-    return this.getLocalConversations();
+    // Read scoped local fallback
+    return this.getLocalConversations(localScopeId);
   }
 
   /**
    * Fetch messages for a specific conversation
    */
-  async getMessages(conversationId: string): Promise<AiMessage[]> {
-    try {
-      const { data, error } = await supabase
-        .from('ai_messages')
-        .select('*')
-        .eq('conversation_id', conversationId)
-        .order('created_at', { ascending: true });
+  async getMessages(conversationId: string, userId?: string | null): Promise<AiMessage[]> {
+    const { cloudUserId, localScopeId } = await resolveAiScope(userId);
 
-      if (!error && data && Array.isArray(data)) {
-        return data;
+    if (isSupabaseConfigured && cloudUserId) {
+      try {
+        const { data, error } = await supabase
+          .from('ai_messages')
+          .select('*')
+          .eq('conversation_id', conversationId)
+          .eq('user_id', cloudUserId)
+          .order('created_at', { ascending: true });
+
+        if (!error && data && Array.isArray(data)) {
+          return data;
+        }
+      } catch (err) {
+        console.warn('[AiService] Fetching messages from Supabase failed, reading local store:', err);
       }
-    } catch (err) {
-      console.warn('[AiService] Fetching messages from Supabase failed, reading local store:', err);
     }
 
-    return this.getLocalMessages(conversationId);
+    return this.getLocalMessages(conversationId, localScopeId);
   }
 
   /**
@@ -226,11 +261,12 @@ export class AiService {
   ): Promise<AiMessage> {
     const newId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `msg_${Date.now()}`;
     const timestamp = new Date().toISOString();
+    const { cloudUserId, localScopeId } = await resolveAiScope(userId);
 
     const msgObj: AiMessage = {
       id: newId,
       conversation_id: conversationId,
-      user_id: userId || undefined,
+      user_id: cloudUserId || undefined,
       sender,
       role,
       content,
@@ -238,45 +274,48 @@ export class AiService {
       created_at: timestamp
     };
 
-    try {
-      const { data, error } = await supabase
-        .from('ai_messages')
-        .insert({
-          id: newId,
-          conversation_id: conversationId,
-          user_id: userId || null,
-          sender,
-          role,
-          content,
-          metadata: metadata || {},
-        })
-        .select()
-        .single();
+    if (isSupabaseConfigured && cloudUserId) {
+      try {
+        const { data, error } = await supabase
+          .from('ai_messages')
+          .insert({
+            id: newId,
+            conversation_id: conversationId,
+            user_id: cloudUserId,
+            sender,
+            role,
+            content,
+            metadata: metadata || {},
+          })
+          .select()
+          .single();
 
-      if (!error && data) {
-        // Also touch updated_at on conversation
-        await supabase
-          .from('ai_conversations')
-          .update({ updated_at: timestamp })
-          .eq('id', conversationId);
+        if (!error && data) {
+          // Also touch updated_at on conversation owned by this user
+          await supabase
+            .from('ai_conversations')
+            .update({ updated_at: timestamp })
+            .eq('id', conversationId)
+            .eq('user_id', cloudUserId);
 
-        return data;
+          return data;
+        }
+      } catch (err) {
+        console.warn('[AiService] Supabase message save fallback to local memory:', err);
       }
-    } catch (err) {
-      console.warn('[AiService] Supabase message save fallback to local memory:', err);
     }
 
-    // Local fallback
-    const currentMsgs = this.getLocalMessages(conversationId);
+    // Scoped Local fallback
+    const currentMsgs = this.getLocalMessages(conversationId, localScopeId);
     currentMsgs.push(msgObj);
-    this.saveLocalMessages(conversationId, currentMsgs);
+    this.saveLocalMessages(conversationId, currentMsgs, localScopeId);
 
     // Touch conversation updated_at locally
-    const convs = this.getLocalConversations();
+    const convs = this.getLocalConversations(localScopeId);
     const targetConv = convs.find(c => c.id === conversationId);
     if (targetConv) {
       targetConv.updated_at = timestamp;
-      this.saveLocalConversations(convs);
+      this.saveLocalConversations(convs, localScopeId);
     }
 
     return msgObj;
@@ -285,55 +324,71 @@ export class AiService {
   /**
    * Delete a conversation
    */
-  async deleteConversation(conversationId: string): Promise<boolean> {
-    try {
-      await supabase.from('ai_conversations').delete().eq('id', conversationId);
-    } catch {}
+  async deleteConversation(conversationId: string, userId?: string | null): Promise<boolean> {
+    const { cloudUserId, localScopeId } = await resolveAiScope(userId);
+    if (isSupabaseConfigured && cloudUserId) {
+      try {
+        await supabase
+          .from('ai_conversations')
+          .delete()
+          .eq('id', conversationId)
+          .eq('user_id', cloudUserId);
+      } catch {}
+    }
 
-    const convs = this.getLocalConversations().filter(c => c.id !== conversationId);
-    this.saveLocalConversations(convs);
+    const convs = this.getLocalConversations(localScopeId).filter(c => c.id !== conversationId);
+    this.saveLocalConversations(convs, localScopeId);
+    const msgKey = this.getMessagesKey(conversationId, localScopeId);
     try {
-      localStorage.removeItem(LOCAL_STORAGE_MESSAGES_PREFIX + conversationId);
+      localStorage.removeItem(msgKey);
     } catch {}
-    delete memoryMessages[conversationId];
+    delete memoryMessages[msgKey];
     return true;
   }
 
-  // Local Storage Helpers
-  private getLocalConversations(): AiConversation[] {
+  // Scoped Local Storage Helpers
+  private getMessagesKey(conversationId: string, scopeId: string): string {
+    return `${LOCAL_STORAGE_MESSAGES_PREFIX}${scopeId}_${conversationId}`;
+  }
+
+  private getLocalConversations(scopeId: string): AiConversation[] {
+    const key = getScopedConversationsKey(scopeId);
     try {
-      const raw = localStorage.getItem(LOCAL_STORAGE_CONVERSATIONS_KEY);
+      const raw = localStorage.getItem(key);
       if (raw) {
-        memoryConversations = JSON.parse(raw);
-        return memoryConversations;
+        memoryConversationsByScope[key] = JSON.parse(raw);
+        return memoryConversationsByScope[key];
       }
     } catch {}
-    return memoryConversations;
+    return memoryConversationsByScope[key] || [];
   }
 
-  private saveLocalConversations(convs: AiConversation[]) {
-    memoryConversations = convs;
+  private saveLocalConversations(convs: AiConversation[], scopeId: string) {
+    const key = getScopedConversationsKey(scopeId);
+    memoryConversationsByScope[key] = convs;
     try {
-      localStorage.setItem(LOCAL_STORAGE_CONVERSATIONS_KEY, JSON.stringify(convs));
+      localStorage.setItem(key, JSON.stringify(convs));
     } catch {}
   }
 
-  private getLocalMessages(conversationId: string): AiMessage[] {
+  private getLocalMessages(conversationId: string, scopeId: string): AiMessage[] {
+    const key = this.getMessagesKey(conversationId, scopeId);
     try {
-      const raw = localStorage.getItem(LOCAL_STORAGE_MESSAGES_PREFIX + conversationId);
+      const raw = localStorage.getItem(key);
       if (raw) {
         const msgs = JSON.parse(raw);
-        memoryMessages[conversationId] = msgs;
+        memoryMessages[key] = msgs;
         return msgs;
       }
     } catch {}
-    return memoryMessages[conversationId] || [];
+    return memoryMessages[key] || [];
   }
 
-  private saveLocalMessages(conversationId: string, msgs: AiMessage[]) {
-    memoryMessages[conversationId] = msgs;
+  private saveLocalMessages(conversationId: string, msgs: AiMessage[], scopeId: string) {
+    const key = this.getMessagesKey(conversationId, scopeId);
+    memoryMessages[key] = msgs;
     try {
-      localStorage.setItem(LOCAL_STORAGE_MESSAGES_PREFIX + conversationId, JSON.stringify(msgs));
+      localStorage.setItem(key, JSON.stringify(msgs));
     } catch {}
   }
 }

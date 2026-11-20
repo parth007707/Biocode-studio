@@ -56,6 +56,7 @@ import { BioErrorBoundary } from '../common/BioErrorBoundary';
 import { formatNumber } from '../../lib/utils/formatters';
 import { SequenceSourceMetadata } from '../../services/adapters/types';
 import { uniprotAdapter, ncbiAdapter } from '../../services/adapters';
+import { bioService } from '../../services/bioService';
 import { SqlMigrationModal } from '../database/SqlMigrationModal';
 import { useBioSequence } from '../../context/BioSequenceContext';
 import { ResidueWhatIfSimulator } from './ResidueWhatIfSimulator';
@@ -394,8 +395,10 @@ export const SequenceWorkbench: React.FC<SequenceWorkbenchProps> = ({
     const a = document.createElement('a');
     a.href = url;
     a.download = `biocode_report_${centralAccession || 'sequence'}_v${centralVersionNumber}_${Date.now()}.json`;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const handleExportPDF = () => {
@@ -436,11 +439,11 @@ export const SequenceWorkbench: React.FC<SequenceWorkbenchProps> = ({
   }, [centralSequenceType, activeAnalysisResult]);
 
   // Biological Sequence Header & Display Formatting
-  const displayAccession = centralAccession || sourceMetadata?.accession || 'NP_000537';
-  const displayDefinition = centralDefinition || (sourceMetadata as any)?.title || sourceMetadata?.definition || 'Cellular tumor antigen p53';
+  const displayAccession = centralAccession || sourceMetadata?.accession || 'Custom Target';
+  const displayDefinition = centralDefinition || (sourceMetadata as any)?.title || sourceMetadata?.definition || 'Biological Target';
   const displayType = centralSequenceType === 'PROTEIN' ? 'PROTEIN' : centralSequenceType === 'RNA' ? 'RNA' : 'DNA';
   const displayOrganism = centralOrganism || sourceMetadata?.organism || 'Homo sapiens';
-  const displayLength = centralLength || (centralOriginalSequence ? centralOriginalSequence.length : (sourceMetadata?.totalLength || 393));
+  const displayLength = centralLength || (centralOriginalSequence ? centralOriginalSequence.length : (sourceMetadata?.totalLength || 0));
   const displayUnit = centralSequenceType === 'PROTEIN' ? 'aa' : 'bp';
   const displayVersion = centralIsModified 
     ? `Version ${centralVersionNumber} — Working Copy`
@@ -493,8 +496,35 @@ export const SequenceWorkbench: React.FC<SequenceWorkbenchProps> = ({
     setSuccessMsg(null);
 
     try {
-      await centralReanalyze(selectedPipeline);
+      const computed = await centralReanalyze(selectedPipeline);
       setHasRunAnalysis(true);
+
+      // Persist completed analysis run to visitor-isolated storage / Supabase
+      if (seqToDisplay) {
+        const resultToSave = computed || activeAnalysisResult;
+        const unitLabel = displayType === 'PROTEIN' ? 'aa' : 'bp';
+        bioService.saveCompletedAnalysis(user?.id, {
+          sequenceInfo: {
+            accession: displayAccession,
+            definition: displayDefinition,
+            organism: displayOrganism,
+            sequence_type: displayType === 'PROTEIN' ? 'Protein' : displayType === 'RNA' ? 'RNA Transcript' : 'Genomic DNA',
+            sequence: seqToDisplay,
+            total_length: seqToDisplay.length,
+            source: sourceMetadata?.source || 'BioCode Sequence Workbench'
+          },
+          analysisInfo: {
+            analysis_type: selectedPipeline,
+            sequence_type: displayType,
+            project_id: currentProjectId || undefined,
+            result_summary: `${selectedPipeline} · ${seqToDisplay.length.toLocaleString()} ${unitLabel}${centralIsModified ? ` (v${centralVersionNumber}, ${centralMutations.length} mutation${centralMutations.length === 1 ? '' : 's'})` : ''}`,
+            results: resultToSave || {}
+          }
+        }).catch((saveErr) => {
+          console.warn('[SequenceWorkbench] Non-blocking analysis persistence notice:', saveErr);
+        });
+      }
+
       setSuccessMsg('Analysis completed and synchronized.');
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
@@ -576,7 +606,7 @@ export const SequenceWorkbench: React.FC<SequenceWorkbenchProps> = ({
     <div className="p-4 md:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto font-sans">
       {/* Top Breadcrumb Bar */}
       {onBackToExplorer && (
-        <div className="flex items-center justify-between pb-2 border-b border-[#E2E8F0]">
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[#E2E8F0]">
           <button
             type="button"
             onClick={onBackToExplorer}
@@ -587,8 +617,8 @@ export const SequenceWorkbench: React.FC<SequenceWorkbenchProps> = ({
           </button>
 
           <span className="text-[11px] font-mono text-[#64748B] flex items-center gap-1.5">
-            <Globe className="w-3.5 h-3.5 text-[#94A3B8]" />
-            NCBI / UniProt / RCSB PDB Active
+            <Globe className="w-3.5 h-3.5 text-[#94A3B8] shrink-0" />
+            <span>NCBI / UniProt / RCSB PDB Active</span>
           </span>
         </div>
       )}
@@ -677,7 +707,7 @@ export const SequenceWorkbench: React.FC<SequenceWorkbenchProps> = ({
           }}
           onApplyChanges={async () => {
             setIsSaving(true);
-            const ok = await centralApplyWorkingCopy(undefined, selectedPipeline);
+            const ok = await centralApplyWorkingCopy(undefined, selectedPipeline, currentProjectId || undefined);
             setIsSaving(false);
             if (ok) {
               setSuccessMsg(`Changes applied! Created Version ${centralVersionNumber + 1}.`);
@@ -691,24 +721,24 @@ export const SequenceWorkbench: React.FC<SequenceWorkbenchProps> = ({
 
       {/* What-If Simulator Modal */}
       {isWhatIfModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="bg-white border border-[#E2E8F0] rounded-2xl w-full max-w-5xl max-h-[90vh] overflow-y-auto shadow-2xl flex flex-col">
-            <div className="flex items-center justify-between p-4 md:px-6 border-b border-[#E2E8F0] bg-slate-50 sticky top-0 z-10">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-purple-600" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white border border-[#E2E8F0] rounded-2xl w-full max-w-5xl max-h-[92dvh] overflow-y-auto shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between gap-2 p-3.5 sm:p-4 md:px-6 border-b border-[#E2E8F0] bg-slate-50 sticky top-0 z-10">
+              <div className="flex flex-wrap items-center gap-2 min-w-0">
+                <Sparkles className="w-4 h-4 text-purple-600 shrink-0" />
                 <h3 className="font-bold text-sm text-[#0F172A] font-mono">What-If Simulator</h3>
-                <span className="text-xs text-[#64748B] font-mono">({displayAccession})</span>
+                <span className="text-xs text-[#64748B] font-mono truncate">({displayAccession})</span>
               </div>
               <button
                 type="button"
                 onClick={() => setIsWhatIfModalOpen(false)}
-                className="p-1 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-200 transition-colors cursor-pointer"
+                className="p-1 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-200 transition-colors cursor-pointer shrink-0"
                 title="Close What-If Simulator"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="p-4 md:p-6">
+            <div className="p-3.5 sm:p-4 md:p-6">
               <BioErrorBoundary moduleName="Residue What-If Simulator" onReset={() => setIsWhatIfModalOpen(false)}>
                 <ResidueWhatIfSimulator
                   onApplied={() => {

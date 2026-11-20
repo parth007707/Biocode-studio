@@ -60,7 +60,7 @@ export const AnalysisJobProgressPanel: React.FC<AnalysisJobProgressPanelProps> =
   };
 
   return (
-    <div className="bg-white border border-[#E2E8F0] rounded-2xl p-6 md:p-8 space-y-6 shadow-md animate-in fade-in zoom-in-95 duration-200">
+    <div className="bg-white border border-[#E2E8F0] rounded-2xl p-4 sm:p-6 md:p-8 space-y-5 sm:space-y-6 shadow-md animate-in fade-in zoom-in-95 duration-200">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-4 flex-wrap gap-3">
         <div className="space-y-1">
@@ -254,7 +254,7 @@ export const AnalysisJobProgressPanel: React.FC<AnalysisJobProgressPanelProps> =
         </button>
 
         {/* Right Side: Primary dynamic actions */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
           {isRunning && (
             <button
               type="button"

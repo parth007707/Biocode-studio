@@ -7,24 +7,26 @@ import { AIAssistantView } from './components/ai/AIAssistantView';
 import { ProjectsView } from './components/projects/ProjectsView';
 import { HistoryView } from './components/history/HistoryView';
 import { SettingsView } from './components/settings/SettingsView';
-import { AuthModal } from './components/auth/AuthModal';
-import { LoginPage } from './components/auth/LoginPage';
-import { AuthCallbackView } from './components/auth/AuthCallbackView';
-import { ResetPasswordView } from './components/auth/ResetPasswordView';
-import { ForgotPasswordView } from './components/auth/ForgotPasswordView';
 import { BioErrorBoundary } from './components/common/BioErrorBoundary';
 import { NavItem, AiContextData } from './types';
-import { supabase, isSupabaseConfigured, AUTH_REQUIRED } from './lib/supabase/client';
-import { Dna, Loader2 } from 'lucide-react';
+import { supabase, isSupabaseConfigured, ensureAnonymousSession } from './lib/supabase/client';
 import { BackgroundParticles } from './components/common/BackgroundParticles';
 import { BioSequenceProvider } from './context/BioSequenceContext';
+import { bioService } from './services/bioService';
 
 export default function App() {
-  const parsePath = (path: string): { tab: NavItem | 'login' | 'auth-callback' | 'reset-password' | 'forgot-password'; analysisId: string | null } => {
-    if (path === '/login' || path === '/sign-in') return { tab: 'login', analysisId: null };
-    if (path === '/auth/callback' || path === '/auth-callback') return { tab: 'auth-callback', analysisId: null };
-    if (path === '/reset-password') return { tab: 'reset-password', analysisId: null };
-    if (path === '/forgot-password') return { tab: 'forgot-password', analysisId: null };
+  const parsePath = (path: string): { tab: NavItem; analysisId: string | null } => {
+    // Redirect legacy auth routes directly to dashboard
+    if (
+      path === '/login' ||
+      path === '/sign-in' ||
+      path === '/auth/callback' ||
+      path === '/auth-callback' ||
+      path === '/reset-password' ||
+      path === '/forgot-password'
+    ) {
+      return { tab: 'dashboard', analysisId: null };
+    }
 
     // Check if path is /analysis-history/:analysisId or /history/:analysisId
     const historyDetailMatch = path.match(/^\/(?:analysis-history|history)\/([a-zA-Z0-9_-]+)/);
@@ -48,13 +50,13 @@ export default function App() {
   };
 
   const initialRoute = parsePath(window.location.pathname);
-  const [activeTab, setActiveTab] = useState<NavItem | 'login' | 'auth-callback' | 'reset-password' | 'forgot-password'>(initialRoute.tab);
+  const [activeTab, setActiveTab] = useState<NavItem>(initialRoute.tab);
   const [selectedAnalysisId, setSelectedAnalysisId] = useState<string | null>(initialRoute.analysisId);
   const [activeAiContext, setActiveAiContext] = useState<AiContextData | null>({
     type: 'dashboard',
-    totalSequences: 4,
-    totalProjects: 1,
-    totalAnalyses: 4,
+    totalSequences: 0,
+    totalProjects: 0,
+    totalAnalyses: 0,
     availableModules: ['Sequence Workbench', 'Structure Explorer', 'Mutation Tracker', 'Database Integrations']
   });
   const [workbenchInitialData, setWorkbenchInitialData] = useState<{
@@ -66,16 +68,32 @@ export default function App() {
     sequenceId?: string;
   } | null>(null);
   const [user, setUser] = useState<any>(null);
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+  const [authReady, setAuthReady] = useState<boolean>(!isSupabaseConfigured);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
+  const [isTabletSidebarExpanded, setIsTabletSidebarExpanded] = useState<boolean>(false);
+
+  const navigateToTab = (tab: NavItem) => {
+    setActiveTab(tab);
+    setIsMobileSidebarOpen(false);
+    if (tab !== 'history') {
+      setSelectedAnalysisId(null);
+    }
+    const pathMap: Record<NavItem, string> = {
+      dashboard: '/dashboard',
+      analysis: '/sequence-analysis',
+      'ai-assistant': '/ai-assistant',
+      projects: '/projects',
+      history: selectedAnalysisId && tab === 'history' ? `/analysis-history/${selectedAnalysisId}` : '/analysis-history',
+      settings: '/settings'
+    };
+    window.history.pushState({}, '', pathMap[tab] || '/dashboard');
+  };
 
   const handleOpenAiWithContext = (context: AiContextData) => {
     setActiveAiContext(context);
     setActiveTab('ai-assistant');
+    setIsMobileSidebarOpen(false);
     window.history.pushState({}, '', '/ai-assistant');
-  };
-
-  const handleOpenAuth = () => {
-    setIsAuthModalOpen(true);
   };
 
   // Sync browser back/forward history
@@ -84,6 +102,7 @@ export default function App() {
       const { tab, analysisId } = parsePath(window.location.pathname);
       setActiveTab(tab);
       setSelectedAnalysisId(analysisId);
+      setIsMobileSidebarOpen(false);
     };
 
     window.addEventListener('popstate', handlePopState);
@@ -92,33 +111,46 @@ export default function App() {
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
-      console.log('[Auth] Supabase is not configured.');
+      setAuthReady(true);
       return;
     }
 
-    // Check active session in background without blocking rendering
-    supabase.auth.getSession().then(({ data: { session }, error }) => {
-      if (error) {
-        console.error('[Auth] getSession error:', error);
-      }
-      setUser(session?.user ?? null);
-    });
+    let isMounted = true;
 
-    // Listen for auth changes
+    ensureAnonymousSession()
+      .then(async (anonUser) => {
+        if (anonUser?.id) {
+          await bioService.migrateLocalGuestToUser(anonUser.id);
+        }
+        if (isMounted) {
+          setUser(anonUser ?? null);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setUser(null);
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setAuthReady(true);
+        }
+      });
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
+      if (session?.user?.id) {
+        bioService.migrateLocalGuestToUser(session.user.id).catch(() => {});
+      }
+      if (isMounted) {
+        setUser(session?.user ?? null);
+      }
     });
 
     return () => {
+      isMounted = false;
       subscription.unsubscribe();
     };
   }, []);
-
-  const handleSignOut = async () => {
-    console.log('[Auth] Signing out user...');
-    await supabase.auth.signOut();
-    setUser(null);
-  };
 
   const handleSelectAnalysis = (id: string | null) => {
     setSelectedAnalysisId(id);
@@ -132,6 +164,7 @@ export default function App() {
   const handleOpenWorkbenchFromHistory = (sequence: string, metadata?: any, pipeline?: string, savedResults?: any) => {
     setWorkbenchInitialData({ sequence, metadata, pipeline, savedResults });
     setActiveTab('analysis');
+    setIsMobileSidebarOpen(false);
     window.history.pushState({}, '', '/sequence-analysis');
   };
 
@@ -145,47 +178,20 @@ export default function App() {
   ) => {
     setWorkbenchInitialData({ sequence, metadata, pipeline, savedResults, projectId, sequenceId });
     setActiveTab('analysis');
+    setIsMobileSidebarOpen(false);
     window.history.pushState({}, '', '/sequence-analysis');
   };
 
-  // Standalone standalone views (LoginPage, AuthCallbackView, ResetPasswordView, ForgotPasswordView)
-  if (activeTab === 'login') {
-    return (
-      <LoginPage 
-        onSuccess={() => {
-          setActiveTab('dashboard');
-          window.history.pushState({}, '', '/dashboard');
-        }}
-        onContinueAsGuest={() => {
-          setActiveTab('dashboard');
-          window.history.pushState({}, '', '/dashboard');
-        }}
-      />
-    );
-  }
-
-  if (activeTab === 'auth-callback') {
-    return <AuthCallbackView />;
-  }
-
-  if (activeTab === 'reset-password') {
-    return <ResetPasswordView />;
-  }
-
-  if (activeTab === 'forgot-password') {
-    return <ForgotPasswordView />;
-  }
-
-  const currentNavItem: NavItem = (activeTab as NavItem) || 'dashboard';
+  const currentNavItem: NavItem = activeTab || 'dashboard';
 
   const renderContent = () => {
     switch (currentNavItem) {
       case 'dashboard':
         return (
           <DashboardView 
-            setActiveTab={setActiveTab} 
-            user={user} 
-            onOpenAuth={handleOpenAuth} 
+            setActiveTab={navigateToTab} 
+            user={user}
+            authReady={authReady}
             onSelectAnalysis={(id) => {
               setSelectedAnalysisId(id);
               setActiveTab('history');
@@ -199,7 +205,6 @@ export default function App() {
         return (
           <AnalysisView 
             user={user} 
-            onOpenAuth={handleOpenAuth} 
             initialWorkbenchData={workbenchInitialData} 
             onOpenAiWithContext={handleOpenAiWithContext}
           />
@@ -207,15 +212,16 @@ export default function App() {
       case 'ai-assistant':
         return (
           <AIAssistantView 
-            user={user} 
+            user={user}
+            authReady={authReady}
             activeContext={activeAiContext}
           />
         );
       case 'projects':
         return (
           <ProjectsView 
-            user={user} 
-            onOpenAuth={handleOpenAuth} 
+            user={user}
+            authReady={authReady}
             onOpenWorkbench={handleOpenWorkbenchFromProject} 
             onOpenAiWithContext={handleOpenAiWithContext}
           />
@@ -223,8 +229,8 @@ export default function App() {
       case 'history':
         return (
           <HistoryView 
-            user={user} 
-            onOpenAuth={handleOpenAuth} 
+            user={user}
+            authReady={authReady}
             initialAnalysisId={selectedAnalysisId}
             onSelectAnalysis={handleSelectAnalysis}
             onOpenWorkbench={handleOpenWorkbenchFromHistory}
@@ -232,64 +238,44 @@ export default function App() {
           />
         );
       case 'settings':
-        return <SettingsView />;
+        return <SettingsView user={user} />;
       default:
-        return <DashboardView setActiveTab={setActiveTab} user={user} onOpenAuth={handleOpenAuth} />;
+        return <DashboardView setActiveTab={navigateToTab} user={user} authReady={authReady} />;
     }
   };
 
   return (
-    <BioSequenceProvider>
+    <BioSequenceProvider userId={user?.id} authReady={authReady}>
       <div 
-        className="flex h-screen text-[#0F172A] font-sans overflow-hidden selection:bg-[#38BDF8]/20 selection:text-[#0284C7] bg-[#F8FAFC] relative"
+        className="flex min-h-screen lg:h-screen w-full text-[#0F172A] font-sans overflow-x-hidden lg:overflow-hidden selection:bg-[#38BDF8]/20 selection:text-[#0284C7] bg-[#F8FAFC] relative"
       >
         {/* Subtle molecular background data particles */}
         <BackgroundParticles />
 
-        {/* Left Sidebar (260px fixed width) */}
-        <Sidebar activeTab={currentNavItem} setActiveTab={(tab) => {
-          setActiveTab(tab);
-          if (tab !== 'history') {
-            setSelectedAnalysisId(null);
-          }
-          const pathMap: Record<NavItem, string> = {
-            dashboard: '/dashboard',
-            analysis: '/sequence-analysis',
-            'ai-assistant': '/ai-assistant',
-            projects: '/projects',
-            history: selectedAnalysisId && tab === 'history' ? `/analysis-history/${selectedAnalysisId}` : '/analysis-history',
-            settings: '/settings'
-          };
-          window.history.pushState({}, '', pathMap[tab] || '/dashboard');
-        }} />
+        {/* Responsive Sidebar: Drawer on mobile, compact/collapsible rail on tablet, permanent 260px on desktop */}
+        <Sidebar 
+          activeTab={currentNavItem} 
+          setActiveTab={navigateToTab}
+          isMobileOpen={isMobileSidebarOpen}
+          onCloseMobile={() => setIsMobileSidebarOpen(false)}
+          isTabletExpanded={isTabletSidebarExpanded}
+          onToggleTabletExpand={() => setIsTabletSidebarExpanded((prev) => !prev)}
+        />
 
         {/* Main Content Area */}
-        <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-transparent">
+        <div className="flex-1 flex flex-col min-w-0 w-full lg:overflow-hidden bg-transparent">
           <TopHeader 
             activeTab={currentNavItem} 
-            user={user} 
-            onSignOut={handleSignOut} 
-            onOpenAuth={handleOpenAuth} 
+            user={user}
+            onOpenMobileMenu={() => setIsMobileSidebarOpen(true)}
           />
           
-          <main className={`flex-1 ${currentNavItem === 'analysis' || currentNavItem === 'ai-assistant' ? 'overflow-hidden' : 'overflow-y-auto'} bg-transparent`}>
+          <main className={`flex-1 min-w-0 ${(currentNavItem === 'analysis' || currentNavItem === 'ai-assistant') ? 'overflow-y-auto lg:overflow-hidden' : 'overflow-y-auto'} bg-transparent`}>
             <BioErrorBoundary moduleName={currentNavItem} key={currentNavItem}>
               {renderContent()}
             </BioErrorBoundary>
           </main>
         </div>
-
-        {/* Auth Modal */}
-        {isAuthModalOpen && (
-          <AuthModal 
-            onSuccess={() => {
-              setIsAuthModalOpen(false);
-            }} 
-            onClose={() => {
-              setIsAuthModalOpen(false);
-            }}
-          />
-        )}
       </div>
     </BioSequenceProvider>
   );

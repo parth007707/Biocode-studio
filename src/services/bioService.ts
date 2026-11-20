@@ -1,4 +1,4 @@
-import { supabase, isSupabaseConfigured } from '../lib/supabase/client';
+import { supabase, isSupabaseConfigured, getActiveSupabaseUserId, getOrCreateGuestScopeId } from '../lib/supabase/client';
 import { requestManager } from '../lib/utils/requestManager';
 import { 
   Project, 
@@ -18,6 +18,20 @@ import { dbLogger } from './dbLogger';
 function isValidUUID(str?: string | null): boolean {
   if (!str || typeof str !== 'string') return false;
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str.trim());
+}
+
+async function resolveEffectiveUserId(explicitUserId?: string | null): Promise<string | null> {
+  if (isValidUUID(explicitUserId)) return explicitUserId!.trim();
+  if (isSupabaseConfigured) {
+    const activeUid = await getActiveSupabaseUserId();
+    if (isValidUUID(activeUid)) return activeUid;
+  }
+  return null;
+}
+
+function getScopedKey(base: string, effectiveUserId?: string | null): string {
+  const scopeId = isValidUUID(effectiveUserId) ? effectiveUserId!.trim() : getOrCreateGuestScopeId();
+  return `${base}_${scopeId}`;
 }
 
 function generateUUID(): string {
@@ -58,6 +72,28 @@ let inFlightHealthCheck: Promise<SchemaHealthStatus> | null = null;
 const HEALTH_CACHE_TTL_MS = 30000; // 30 seconds cache
 
 export const bioService = {
+  getLocalAnalysesCache(userId?: string | null): AnalysisRecord[] {
+    try {
+      const uid = isValidUUID(userId) ? userId!.trim() : null;
+      const raw = getLocalItem(getScopedKey('biocode_analyses', uid), '[]');
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  },
+
+  async getPendingRecoveryQueueCount(userId?: string | null): Promise<number> {
+    try {
+      const uid = await resolveEffectiveUserId(userId);
+      if (!isSupabaseConfigured || !uid) return 0;
+      const raw = getLocalItem(getScopedKey('pending_analysis_queue', uid), '[]');
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.length : 0;
+    } catch {
+      return 0;
+    }
+  },
   /**
    * Diagnostic method to inspect whether Supabase tables are present in PostgREST schema cache.
    * Uses in-memory caching and in-flight deduplication to prevent rate limit exceeded errors.
@@ -315,10 +351,23 @@ export const bioService = {
     }
 
     try {
-      // 1. Test Select
+      const effectiveUserId = await resolveEffectiveUserId();
+
+      if (!effectiveUserId) {
+        return {
+          reachable: true,
+          canSelect: false,
+          canInsert: false,
+          error: 'Active visitor/user session required by RLS for cloud round-trip verification.',
+          durationMs: Date.now() - startTime
+        };
+      }
+
+      // 1. Test Select strictly scoped to visitor
       const selectRes = await supabase
         .from('sequence_versions')
         .select('id, version_number, sequence_data, created_at')
+        .eq('user_id', effectiveUserId)
         .limit(1);
 
       if (selectRes.error) {
@@ -334,12 +383,13 @@ export const bioService = {
 
       console.log('[SUPABASE_HEALTH] [SEQUENCE_VERSION] Select succeeded on sequence_versions.');
 
-      // 2. Test Insert a test verification record
+      // 2. Test Insert a test verification record scoped to current user
       const testId = generateUUID();
       const insertRes = await supabase
         .from('sequence_versions')
         .insert({
           id: testId,
+          user_id: effectiveUserId,
           version_number: 999,
           sequence_data: 'ATGC',
           original_length: 4,
@@ -363,7 +413,7 @@ export const bioService = {
         
         // Clean up test verification record
         try {
-          await supabase.from('sequence_versions').delete().eq('id', testId);
+          await supabase.from('sequence_versions').delete().eq('id', testId).eq('user_id', effectiveUserId);
           console.log('[SUPABASE_HEALTH] [SEQUENCE_VERSION] Cleaned up verification record.');
         } catch {}
       }
@@ -404,7 +454,7 @@ export const bioService = {
     const startTime = Date.now();
     const sequenceId = generateUUID();
     const analysisId = generateUUID();
-    const validUserId = isValidUUID(userId) ? userId : null;
+    const validUserId = await resolveEffectiveUserId(userId);
 
     // Validate inputs
     const accession = input.sequenceInfo.accession?.trim() || `seq-${Date.now().toString(36)}`;
@@ -460,7 +510,7 @@ export const bioService = {
     if (validProjectId) anaPayload.project_id = validProjectId;
 
     // DIRECT SUPABASE PERSISTENCE ATTEMPT
-    if (isSupabaseConfigured) {
+    if (isSupabaseConfigured && validUserId) {
       try {
         console.log('[BioService] Executing direct Supabase persistence...');
 
@@ -546,12 +596,15 @@ export const bioService = {
           message: 'Analysis securely saved to Supabase Cloud.'
         });
 
-        // Also update local cache for smooth offline instant retrieval
+        // Update scoped local cache for smooth offline instant retrieval
         try {
-          const localAna = JSON.parse(getLocalItem('biocode_analyses', '[]'));
+          const anaKey = getScopedKey('biocode_analyses', validUserId);
+          const localAna = JSON.parse(getLocalItem(anaKey, '[]'));
           const updated = [completeRecord, ...localAna.filter((a: any) => a.id !== completeRecord.id)];
-          setLocalItem('biocode_analyses', JSON.stringify(updated.slice(0, 100)));
+          setLocalItem(anaKey, JSON.stringify(updated.slice(0, 100)));
         } catch {}
+
+        requestManager.invalidateCache();
 
         return {
           data: completeRecord,
@@ -566,8 +619,10 @@ export const bioService = {
         console.error('Supabase persistence failed:', err);
         return this.handleOfflineRecoverySave(seqPayload, anaPayload, err?.message || 'Database error');
       }
+    } else if (isSupabaseConfigured && !validUserId) {
+      return this.handleOfflineRecoverySave(seqPayload, anaPayload, 'Anonymous session unavailable for cloud persistence');
     } else {
-      console.warn('[BioService] Supabase not configured, saving to local recovery queue.');
+      console.warn('[BioService] Supabase not configured, saving to scoped local storage.');
       return this.handleOfflineRecoverySave(seqPayload, anaPayload, 'Supabase credentials not configured');
     }
   },
@@ -608,7 +663,7 @@ export const bioService = {
   },
 
   /**
-   * Internal helper to store failed cloud analyses in the pending offline recovery queue
+   * Internal helper to store failed/offline analyses in the scoped pending recovery queue & caches
    */
   handleOfflineRecoverySave(
     seqPayload: any,
@@ -617,11 +672,12 @@ export const bioService = {
   ): PersistenceResult<AnalysisRecord> {
     const recoveryId = anaPayload.id || generateUUID();
     const now = new Date().toISOString();
+    const scopeUid = isValidUUID(anaPayload.user_id) ? anaPayload.user_id : (isValidUUID(seqPayload.user_id) ? seqPayload.user_id : null);
 
     const pendingItem: PendingRecoveryRecord = {
       id: recoveryId,
       timestamp: now,
-      userId: anaPayload.user_id || null,
+      userId: scopeUid,
       sequencePayload: seqPayload,
       analysisPayload: anaPayload,
       sync_status: 'pending',
@@ -629,14 +685,19 @@ export const bioService = {
       lastError: errorMessage
     };
 
-    // 1. Add to pending recovery queue
-    try {
-      const queue: PendingRecoveryRecord[] = JSON.parse(getLocalItem('pending_analysis_queue', '[]'));
-      queue.unshift(pendingItem);
-      setLocalItem('pending_analysis_queue', JSON.stringify(queue.slice(0, 50)));
-    } catch {}
+    const canUseCloud = isSupabaseConfigured && isValidUUID(scopeUid);
 
-    // 2. Add to local offline history cache
+    // 1. Add to scoped pending recovery queue (only when Supabase cloud session is active)
+    if (canUseCloud) {
+      try {
+        const queueKey = getScopedKey('pending_analysis_queue', scopeUid);
+        const queue: PendingRecoveryRecord[] = JSON.parse(getLocalItem(queueKey, '[]'));
+        queue.unshift(pendingItem);
+        setLocalItem(queueKey, JSON.stringify(queue.slice(0, 50)));
+      } catch {}
+    }
+
+    // 2. Add to scoped local history & sequence caches
     const fallbackSeqRecord: SequenceRecord = {
       ...seqPayload,
       created_at: now,
@@ -653,36 +714,44 @@ export const bioService = {
     };
 
     try {
-      const localAna = JSON.parse(getLocalItem('biocode_analyses', '[]'));
+      const anaKey = getScopedKey('biocode_analyses', scopeUid);
+      const localAna = JSON.parse(getLocalItem(anaKey, '[]'));
       localAna.unshift(fallbackRecord);
-      setLocalItem('biocode_analyses', JSON.stringify(localAna.slice(0, 100)));
+      setLocalItem(anaKey, JSON.stringify(localAna.slice(0, 100)));
 
-      const localSeq = JSON.parse(getLocalItem('biocode_sequence_records', '[]'));
+      const seqKey = getScopedKey('biocode_sequence_records', scopeUid);
+      const localSeq = JSON.parse(getLocalItem(seqKey, '[]'));
       localSeq.unshift(fallbackSeqRecord);
-      setLocalItem('biocode_sequence_records', JSON.stringify(localSeq.slice(0, 100)));
+      setLocalItem(seqKey, JSON.stringify(localSeq.slice(0, 100)));
     } catch {}
+
+    requestManager.invalidateCache();
 
     dbLogger.log({
       operation: 'SAVE_ANALYSIS',
-      status: 'RECOVERY_QUEUED',
+      status: canUseCloud ? 'RECOVERY_QUEUED' : 'SUCCESS',
       sequenceId: seqPayload.id,
       analysisId: recoveryId,
       accession: seqPayload.accession,
       pipeline: anaPayload.analysis_type,
-      storage: 'local_recovery',
-      message: 'Cloud save failed. Saved temporarily to local recovery storage.',
-      error: errorMessage
+      storage: canUseCloud ? 'local_recovery' : 'local_cache',
+      message: canUseCloud
+        ? 'Cloud save failed. Saved temporarily to local recovery storage.'
+        : 'Saved to isolated visitor browser workspace.',
+      error: canUseCloud ? errorMessage : undefined
     });
 
     return {
       data: fallbackRecord,
-      storage: 'local_recovery',
-      message: 'Cloud save failed. Saved temporarily to local recovery storage.',
-      warning: errorMessage,
-      error: errorMessage,
+      storage: canUseCloud ? 'local_recovery' : 'local_fallback',
+      message: canUseCloud
+        ? 'Cloud save failed. Saved temporarily to local recovery storage.'
+        : 'Saved to isolated visitor browser workspace.',
+      warning: canUseCloud ? errorMessage : undefined,
+      error: canUseCloud ? errorMessage : undefined,
       sequenceId: seqPayload.id,
       analysisId: recoveryId,
-      sync_status: 'pending'
+      sync_status: canUseCloud ? 'pending' : 'synced'
     };
   },
 
@@ -692,8 +761,12 @@ export const bioService = {
   async syncPendingRecoveryQueue(userId?: string): Promise<{ syncedCount: number; failedCount: number }> {
     if (!isSupabaseConfigured || typeof window === 'undefined' || typeof localStorage === 'undefined') return { syncedCount: 0, failedCount: 0 };
 
+    const effectiveUserId = await resolveEffectiveUserId(userId);
+    if (!effectiveUserId) return { syncedCount: 0, failedCount: 0 };
+
     try {
-      const queueRaw = localStorage.getItem('pending_analysis_queue');
+      const queueKey = getScopedKey('pending_analysis_queue', effectiveUserId);
+      const queueRaw = localStorage.getItem(queueKey);
       if (!queueRaw) return { syncedCount: 0, failedCount: 0 };
 
       const queue: PendingRecoveryRecord[] = JSON.parse(queueRaw);
@@ -711,7 +784,7 @@ export const bioService = {
 
       for (const item of queue) {
         try {
-          const seqPayload = { ...item.sequencePayload };
+          const seqPayload = { ...item.sequencePayload, user_id: effectiveUserId };
           delete seqPayload.project_id;
           delete seqPayload._is_local_fallback;
 
@@ -719,7 +792,7 @@ export const bioService = {
             seqPayload.id = generateUUID();
           }
 
-          const anaPayload = { ...item.analysisPayload };
+          const anaPayload = { ...item.analysisPayload, user_id: effectiveUserId };
           delete anaPayload._is_local_fallback;
           anaPayload.sequence_id = seqPayload.id;
 
@@ -758,7 +831,8 @@ export const bioService = {
         }
       }
 
-      localStorage.setItem('pending_analysis_queue', JSON.stringify(remainingQueue));
+      localStorage.setItem(queueKey, JSON.stringify(remainingQueue));
+      requestManager.invalidateCache();
       return { syncedCount, failedCount };
     } catch (err) {
       console.warn('[BioService] Error in syncPendingRecoveryQueue:', err);
@@ -768,28 +842,29 @@ export const bioService = {
 
   /**
    * Sequence Records Service
-   * Safely retrieves sequence records from Supabase with offline caching and deduplication
+   * Strictly isolated per visitor/anonymous session ID (auth.uid()).
    */
   async getSequenceRecords(userId?: string, forceRefresh: boolean = false): Promise<SequenceRecord[]> {
+    const effectiveUserId = await resolveEffectiveUserId(userId);
+    const localKey = getScopedKey('biocode_sequence_records', effectiveUserId);
+
     return requestManager.execute(
       async () => {
-        if (!isSupabaseConfigured) {
+        if (!isSupabaseConfigured || !effectiveUserId) {
           try {
-            const local = localStorage.getItem('biocode_sequence_records');
-            return local ? JSON.parse(local) : [];
+            const local = getLocalItem(localKey, '[]');
+            return JSON.parse(local);
           } catch {
             return [];
           }
         }
 
         try {
-          let query = supabase.from('sequence_records').select('*').order('created_at', { ascending: false });
-          
-          if (isValidUUID(userId)) {
-            query = query.or(`user_id.eq.${userId},user_id.is.null`);
-          }
-
-          const { data, error } = await query;
+          const { data, error } = await supabase
+            .from('sequence_records')
+            .select('*')
+            .eq('user_id', effectiveUserId)
+            .order('created_at', { ascending: false });
 
           if (error) {
             console.error('[BioService] Supabase sequence_records query error:', error);
@@ -818,9 +893,9 @@ export const bioService = {
             updated_at: r.updated_at
           }));
 
-          // Cache locally for offline resiliency
+          // Cache locally per visitor scope for offline resiliency
           try {
-            localStorage.setItem('biocode_sequence_records', JSON.stringify(cloudRecords.slice(0, 100)));
+            setLocalItem(localKey, JSON.stringify(cloudRecords.slice(0, 100)));
           } catch {}
 
           return cloudRecords;
@@ -831,7 +906,7 @@ export const bioService = {
         }
       },
       {
-        key: `seq_records_${userId || 'all'}`,
+        key: `seq_records_${effectiveUserId || 'guest'}`,
         ttlMs: 5000,
         forceRefresh
       }
@@ -856,7 +931,8 @@ export const bioService = {
     }
   ): Promise<PersistenceResult<SequenceRecord>> {
     const generatedId = generateUUID();
-    const validUserId = isValidUUID(userId) ? userId : null;
+    const validUserId = await resolveEffectiveUserId(userId);
+    const localKey = getScopedKey('biocode_sequence_records', validUserId);
 
     const newRecord: SequenceRecord = {
       id: generatedId,
@@ -876,23 +952,24 @@ export const bioService = {
       updated_at: new Date().toISOString()
     };
 
-    if (!isSupabaseConfigured) {
+    if (!isSupabaseConfigured || !validUserId) {
       try {
-        const local = localStorage.getItem('biocode_sequence_records');
-        const list = local ? JSON.parse(local) : [];
+        const list = JSON.parse(getLocalItem(localKey, '[]'));
         list.unshift(newRecord);
-        localStorage.setItem('biocode_sequence_records', JSON.stringify(list.slice(0, 100)));
+        setLocalItem(localKey, JSON.stringify(list.slice(0, 100)));
       } catch {}
+      requestManager.invalidateCache();
       return {
         data: newRecord,
         storage: 'local_fallback',
-        warning: 'Supabase is not configured. Saved to local storage fallback.'
+        warning: isSupabaseConfigured ? undefined : 'Supabase is not configured. Saved to local storage fallback.'
       };
     }
 
     try {
       const insertPayload: any = {
         id: generatedId,
+        user_id: validUserId,
         source: record.source || 'Direct Input',
         accession: record.accession,
         version: record.version || null,
@@ -905,10 +982,6 @@ export const bioService = {
         sequence: record.sequence || null,
         metadata: record.metadata || {}
       };
-
-      if (validUserId) {
-        insertPayload.user_id = validUserId;
-      }
 
       const { data, error } = await supabase
         .from('sequence_records')
@@ -958,22 +1031,25 @@ export const bioService = {
     }
   },
 
-  async deleteSequenceRecord(sequenceId: string): Promise<boolean> {
+  async deleteSequenceRecord(sequenceId: string, userId?: string): Promise<boolean> {
     if (!sequenceId) throw new Error('Sequence ID is required.');
+    const effectiveUserId = await resolveEffectiveUserId(userId);
+    const localKey = getScopedKey('biocode_sequence_records', effectiveUserId);
 
-    if (isSupabaseConfigured) {
+    if (isSupabaseConfigured && effectiveUserId) {
       const { error } = await supabase
         .from('sequence_records')
         .delete()
-        .eq('id', sequenceId);
+        .eq('id', sequenceId)
+        .eq('user_id', effectiveUserId);
 
       if (error) throw new Error(error.message || 'Failed to delete sequence record.');
     }
 
     try {
-      const local = getLocalItem('biocode_sequence_records', '[]');
+      const local = getLocalItem(localKey, '[]');
       const list = JSON.parse(local).filter((s: any) => s.id !== sequenceId);
-      setLocalItem('biocode_sequence_records', JSON.stringify(list));
+      setLocalItem(localKey, JSON.stringify(list));
     } catch {}
 
     requestManager.invalidateCache();
@@ -982,39 +1058,35 @@ export const bioService = {
 
   /**
    * Analyses Service
-   * Unified persistence & audit log query that fetches real Supabase records from both
-   * `analyses` and `sequence_records` tables, guarantees relationship linkage,
-   * handles NULL user_ids, and provides seamless offline fallback to localStorage.
+   * Strictly isolated per visitor/anonymous session ID (auth.uid()).
    */
   async getAnalyses(userId?: string, forceRefresh: boolean = false): Promise<AnalysisRecord[]> {
+    const effectiveUserId = await resolveEffectiveUserId(userId);
+    const localKey = getScopedKey('biocode_analyses', effectiveUserId);
+
     return requestManager.execute(
       async () => {
-        if (!isSupabaseConfigured) {
+        if (!isSupabaseConfigured || !effectiveUserId) {
           try {
-            const local = localStorage.getItem('biocode_analyses');
-            return local ? JSON.parse(local) : [];
+            const local = getLocalItem(localKey, '[]');
+            return JSON.parse(local);
           } catch {
             return [];
           }
         }
 
         try {
-          // 1. Fetch sequence records
-          const sequenceRecords = await this.getSequenceRecords(userId, forceRefresh);
+          // 1. Fetch sequence records belonging strictly to this visitor
+          const sequenceRecords = await this.getSequenceRecords(effectiveUserId, forceRefresh);
           const seqMap = new Map<string, SequenceRecord>();
           sequenceRecords.forEach(s => seqMap.set(s.id, s));
 
-          // 2. Fetch analyses from Supabase
-          let anaQuery = supabase
+          // 2. Fetch analyses strictly owned by this visitor
+          const { data: analysesData, error: anaError } = await supabase
             .from('analyses')
             .select('*')
+            .eq('user_id', effectiveUserId)
             .order('created_at', { ascending: false });
-
-          if (isValidUUID(userId)) {
-            anaQuery = anaQuery.or(`user_id.eq.${userId},user_id.is.null`);
-          }
-
-          const { data: analysesData, error: anaError } = await anaQuery;
 
           if (anaError) {
             console.warn('[BioService] Supabase analyses query returned error:', anaError.message || anaError);
@@ -1101,37 +1173,50 @@ export const bioService = {
             }
           });
 
-          // Merge any un-synced offline pending recovery items
+          // Merge only this visitor's unsynced pending recovery items
           try {
-            const local = localStorage.getItem('biocode_analyses');
-            if (local) {
-              const localList: AnalysisRecord[] = JSON.parse(local);
-              localList.forEach(l => {
-                if (!combinedMap.has(l.id)) {
-                  combinedMap.set(l.id, l);
-                }
-              });
-            }
+            const queueRaw = getLocalItem(getScopedKey('pending_analysis_queue', effectiveUserId), '[]');
+            const queue: PendingRecoveryRecord[] = JSON.parse(queueRaw);
+            queue.forEach((item) => {
+              if (item.userId === effectiveUserId && !combinedMap.has(item.id)) {
+                combinedMap.set(item.id, {
+                  ...item.analysisPayload,
+                  id: item.id,
+                  created_at: item.timestamp,
+                  updated_at: item.timestamp,
+                  sequence_record: item.sequencePayload ? {
+                    ...item.sequencePayload,
+                    created_at: item.timestamp,
+                    updated_at: item.timestamp
+                  } : null,
+                  _is_local_fallback: true
+                });
+              }
+            });
           } catch {}
 
           const finalRecords = Array.from(combinedMap.values()).sort(
             (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
           );
 
+          try {
+            setLocalItem(localKey, JSON.stringify(finalRecords.slice(0, 100)));
+          } catch {}
+
           return finalRecords;
         } catch (err: any) {
           if (requestManager.isRateLimitError(err)) throw err;
-          console.warn('[BioService] Exception in getAnalyses, using local storage fallback:', err?.message || err);
+          console.warn('[BioService] Exception in getAnalyses, using scoped local storage fallback:', err?.message || err);
           try {
-            const local = localStorage.getItem('biocode_analyses');
-            return local ? JSON.parse(local) : [];
+            const local = getLocalItem(localKey, '[]');
+            return JSON.parse(local);
           } catch {
             return [];
           }
         }
       },
       {
-        key: `getAnalyses_${userId || 'anon'}`,
+        key: `getAnalyses_${effectiveUserId || 'guest'}`,
         ttlMs: 30000,
         forceRefresh
       }
@@ -1139,10 +1224,14 @@ export const bioService = {
   },
 
   /**
-   * Fetch a single analysis record by ID from Supabase with full relationship to sequence_records.
+   * Fetch a single analysis record by ID from Supabase strictly scoped to visitor.
    */
   async getAnalysisById(id: string, userId?: string, forceRefresh: boolean = false): Promise<AnalysisRecord | null> {
     if (!id) return null;
+    const effectiveUserId = await resolveEffectiveUserId(userId);
+    const localAnaKey = getScopedKey('biocode_analyses', effectiveUserId);
+    const localSeqKey = getScopedKey('biocode_sequence_records', effectiveUserId);
+
     return requestManager.execute(
       async () => {
         console.log('[BioService] getAnalysisById called for ID:', id);
@@ -1154,14 +1243,14 @@ export const bioService = {
           message: `Fetching analysis details for canonical ID ${id}...`
         });
 
-        // If Supabase is not configured, search local caches
-        if (!isSupabaseConfigured) {
+        // If Supabase is not configured or no anonymous session is active, search scoped local caches
+        if (!isSupabaseConfigured || !effectiveUserId) {
           try {
-            const localAna = JSON.parse(getLocalItem('biocode_analyses', '[]'));
+            const localAna = JSON.parse(getLocalItem(localAnaKey, '[]'));
             const foundAna = localAna.find((a: any) => a.id === id);
             if (foundAna) return foundAna;
 
-            const localSeq = JSON.parse(getLocalItem('biocode_sequence_records', '[]'));
+            const localSeq = JSON.parse(getLocalItem(localSeqKey, '[]'));
             const foundSeq = localSeq.find((s: any) => s.id === id);
             if (foundSeq) {
               return {
@@ -1192,11 +1281,12 @@ export const bioService = {
         }
 
         try {
-          // 1. Search the `analyses` table in Supabase
+          // 1. Search the `analyses` table strictly scoped to effectiveUserId
           const { data: anaData, error: anaError } = await supabase
             .from('analyses')
             .select('*')
             .eq('id', id)
+            .eq('user_id', effectiveUserId)
             .maybeSingle();
 
           if (anaError && requestManager.isRateLimitError(anaError)) {
@@ -1210,6 +1300,7 @@ export const bioService = {
                 .from('sequence_records')
                 .select('*')
                 .eq('id', anaData.sequence_id)
+                .eq('user_id', effectiveUserId)
                 .maybeSingle();
 
               if (seqData) {
@@ -1267,11 +1358,12 @@ export const bioService = {
             return resolved;
           }
 
-          // 2. If not found in `analyses`, check if ID corresponds directly to a `sequence_records` row
+          // 2. If not found in `analyses`, check if ID corresponds directly to a `sequence_records` row owned by visitor
           const { data: seqData, error: seqError } = await supabase
             .from('sequence_records')
             .select('*')
             .eq('id', id)
+            .eq('user_id', effectiveUserId)
             .maybeSingle();
 
           if (seqError && requestManager.isRateLimitError(seqError)) {
@@ -1323,8 +1415,8 @@ export const bioService = {
             };
           }
 
-          // 3. Fallback to local recovery storage
-          const localAna = JSON.parse(getLocalItem('biocode_analyses', '[]'));
+          // 3. Fallback to scoped local recovery storage
+          const localAna = JSON.parse(getLocalItem(localAnaKey, '[]'));
           const foundAna = localAna.find((a: any) => a.id === id);
           if (foundAna) return { ...foundAna, _is_local_fallback: true };
 
@@ -1333,7 +1425,7 @@ export const bioService = {
           if (requestManager.isRateLimitError(err)) throw err;
           console.error('[BioService] Error in getAnalysisById:', err);
           try {
-            const localAna = JSON.parse(getLocalItem('biocode_analyses', '[]'));
+            const localAna = JSON.parse(getLocalItem(localAnaKey, '[]'));
             const found = localAna.find((a: any) => a.id === id);
             if (found) return found;
           } catch {}
@@ -1341,7 +1433,7 @@ export const bioService = {
         }
       },
       {
-        key: `getAnalysisById_${id}_${userId || 'anon'}`,
+        key: `getAnalysisById_${id}_${effectiveUserId || 'guest'}`,
         ttlMs: 60000,
         forceRefresh
       }
@@ -1366,7 +1458,8 @@ export const bioService = {
     }
   ): Promise<PersistenceResult<AnalysisRecord>> {
     const generatedId = generateUUID();
-    const validUserId = isValidUUID(userId) ? userId : null;
+    const validUserId = await resolveEffectiveUserId(userId);
+    const localKey = getScopedKey('biocode_analyses', validUserId);
     const validSeqId = isValidUUID(record.sequence_id) ? record.sequence_id : null;
     const validProjId = isValidUUID(record.project_id) ? record.project_id : null;
 
@@ -1389,26 +1482,28 @@ export const bioService = {
       results: record.results || null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-      _is_local_fallback: !isSupabaseConfigured
+      _is_local_fallback: !isSupabaseConfigured || !validUserId
     };
 
-    if (!isSupabaseConfigured) {
+    if (!isSupabaseConfigured || !validUserId) {
       try {
-        const local = getLocalItem('biocode_analyses', '[]');
+        const local = getLocalItem(localKey, '[]');
         const list = JSON.parse(local);
         list.unshift(newRecord);
-        setLocalItem('biocode_analyses', JSON.stringify(list.slice(0, 100)));
+        setLocalItem(localKey, JSON.stringify(list.slice(0, 100)));
       } catch {}
+      requestManager.invalidateCache();
       return {
         data: newRecord,
         storage: 'local_fallback',
-        warning: 'Supabase is not configured. Saved to local storage.'
+        warning: isSupabaseConfigured ? undefined : 'Supabase is not configured. Saved to local storage.'
       };
     }
 
     try {
       const insertData: any = {
         id: generatedId,
+        user_id: validUserId,
         analysis_type: record.analysis_type,
         analysis_scope: record.analysis_scope || 'Complete Sequence',
         total_sequence_length: effectiveTotalLength,
@@ -1420,7 +1515,6 @@ export const bioService = {
         results: record.results || null
       };
 
-      if (validUserId) insertData.user_id = validUserId;
       if (validSeqId) insertData.sequence_id = validSeqId;
       if (validProjId) insertData.project_id = validProjId;
 
@@ -1473,22 +1567,25 @@ export const bioService = {
     }
   },
 
-  async deleteAnalysis(analysisId: string): Promise<boolean> {
+  async deleteAnalysis(analysisId: string, userId?: string): Promise<boolean> {
     if (!analysisId) throw new Error('Analysis ID is required.');
+    const effectiveUserId = await resolveEffectiveUserId(userId);
+    const localKey = getScopedKey('biocode_analyses', effectiveUserId);
 
-    if (isSupabaseConfigured) {
+    if (isSupabaseConfigured && effectiveUserId) {
       const { error } = await supabase
         .from('analyses')
         .delete()
-        .eq('id', analysisId);
+        .eq('id', analysisId)
+        .eq('user_id', effectiveUserId);
 
       if (error) throw new Error(error.message || 'Failed to delete analysis record.');
     }
 
     try {
-      const local = getLocalItem('biocode_analyses', '[]');
+      const local = getLocalItem(localKey, '[]');
       const list = JSON.parse(local).filter((a: any) => a.id !== analysisId);
-      setLocalItem('biocode_analyses', JSON.stringify(list));
+      setLocalItem(localKey, JSON.stringify(list));
     } catch {}
 
     requestManager.invalidateCache();
@@ -1499,30 +1596,64 @@ export const bioService = {
    * Projects Service
    */
   async getProjects(userId?: string, forceRefresh: boolean = false): Promise<Project[]> {
+    const effectiveUserId = await resolveEffectiveUserId(userId);
+    const localKey = getScopedKey('biocode_projects', effectiveUserId);
+
     return requestManager.execute(
       async () => {
-        if (!isSupabaseConfigured) {
+        if (!isSupabaseConfigured || !effectiveUserId) {
           try {
-            const local = getLocalItem('biocode_projects', '[]');
-            return JSON.parse(local);
+            const localProjs: Project[] = JSON.parse(getLocalItem(localKey, '[]'));
+            const localAna: AnalysisRecord[] = JSON.parse(getLocalItem(getScopedKey('biocode_analyses', effectiveUserId), '[]'));
+            const localLinks: any[] = JSON.parse(getLocalItem(getScopedKey('biocode_project_sequences', effectiveUserId), '[]'));
+
+            return localProjs.map((p) => {
+              const projAnalyses = localAna.filter((a) => a.project_id === p.id);
+              const projLinks = localLinks.filter((ps) => ps.project_id === p.id);
+              const seqSet = new Set<string>();
+              projLinks.forEach((ps) => ps.sequence_id && seqSet.add(ps.sequence_id));
+              projAnalyses.forEach((a) => a.sequence_id && seqSet.add(a.sequence_id));
+
+              const modifiedCount = projAnalyses.filter((a) => {
+                const res = a.results || {};
+                return res.versionNumber === 2 || (Array.isArray(res.mutations) && res.mutations.length > 0);
+              }).length;
+
+              const timestamps: number[] = [
+                new Date(p.created_at).getTime(),
+                new Date(p.updated_at || p.created_at).getTime(),
+                ...projAnalyses.map((a) => new Date(a.created_at).getTime()),
+                ...projLinks.map((ps) => new Date(ps.created_at).getTime())
+              ].filter((t) => !isNaN(t));
+
+              const latestMs = Math.max(...timestamps, 0);
+
+              return {
+                ...p,
+                sequencesCount: seqSet.size,
+                analysesCount: projAnalyses.length,
+                modifiedVersionsCount: modifiedCount,
+                lastUpdated: p.updated_at || p.created_at,
+                lastActivity: latestMs > 0 ? new Date(latestMs).toISOString() : p.created_at
+              };
+            });
           } catch {
             return [];
           }
         }
 
         try {
-          let query = supabase.from('projects').select('*').order('created_at', { ascending: false });
-          if (isValidUUID(userId)) {
-            query = query.or(`user_id.eq.${userId},user_id.is.null`);
-          }
-
-          const { data: projData, error } = await query;
+          const { data: projData, error } = await supabase
+            .from('projects')
+            .select('*')
+            .eq('user_id', effectiveUserId)
+            .order('created_at', { ascending: false });
 
           if (error) {
             console.warn('[BioService] Supabase projects query error:', error.message || error);
             if (requestManager.isRateLimitError(error)) throw error;
             try {
-              const local = getLocalItem('biocode_projects', '[]');
+              const local = getLocalItem(localKey, '[]');
               return JSON.parse(local);
             } catch {
               return [];
@@ -1534,10 +1665,18 @@ export const bioService = {
 
           const projectIds = projectsList.map((p: any) => p.id);
 
-          // Concurrent fetch for metrics calculation across projects
+          // Concurrent fetch for metrics calculation scoped strictly to effectiveUserId
           const [analysesRes, projSeqRes] = await Promise.all([
-            supabase.from('analyses').select('id, project_id, sequence_id, created_at, results').in('project_id', projectIds),
-            supabase.from('project_sequences').select('project_id, sequence_id, created_at').in('project_id', projectIds)
+            supabase
+              .from('analyses')
+              .select('id, project_id, sequence_id, created_at, results')
+              .in('project_id', projectIds)
+              .eq('user_id', effectiveUserId),
+            supabase
+              .from('project_sequences')
+              .select('project_id, sequence_id, created_at')
+              .in('project_id', projectIds)
+              .eq('user_id', effectiveUserId)
           ]);
 
           const allAnalyses = analysesRes.data || [];
@@ -1588,15 +1727,15 @@ export const bioService = {
           });
 
           try {
-            setLocalItem('biocode_projects', JSON.stringify(cloudProjects.slice(0, 50)));
+            setLocalItem(localKey, JSON.stringify(cloudProjects.slice(0, 50)));
           } catch {}
 
           return cloudProjects;
         } catch (err: any) {
           if (requestManager.isRateLimitError(err)) throw err;
-          console.warn('[BioService] Exception in getProjects, using local fallback:', err?.message || err);
+          console.warn('[BioService] Exception in getProjects, using scoped local fallback:', err?.message || err);
           try {
-            const local = getLocalItem('biocode_projects', '[]');
+            const local = getLocalItem(localKey, '[]');
             return JSON.parse(local);
           } catch {
             return [];
@@ -1604,23 +1743,29 @@ export const bioService = {
         }
       },
       {
-        key: `getProjects_${userId || 'anon'}`,
+        key: `getProjects_${effectiveUserId || 'guest'}`,
         ttlMs: 30000,
         forceRefresh
       }
     );
   },
 
-  async getProjectById(projectId: string): Promise<Project | null> {
+  async getProjectById(projectId: string, userId?: string): Promise<Project | null> {
     if (!projectId) return null;
-    const projects = await this.getProjects(undefined, true);
+    const effectiveUserId = await resolveEffectiveUserId(userId);
+    const projects = await this.getProjects(effectiveUserId || undefined, true);
     const found = projects.find((p) => p.id === projectId);
     if (found) return found;
 
-    if (!isSupabaseConfigured) return null;
+    if (!isSupabaseConfigured || !effectiveUserId) return null;
 
     try {
-      const { data, error } = await supabase.from('projects').select('*').eq('id', projectId).single();
+      const { data, error } = await supabase
+        .from('projects')
+        .select('*')
+        .eq('id', projectId)
+        .eq('user_id', effectiveUserId)
+        .single();
       if (error || !data) return null;
 
       return {
@@ -1662,7 +1807,8 @@ export const bioService = {
     }
 
     const generatedId = generateUUID();
-    const validUserId = isValidUUID(userId) ? userId : null;
+    const validUserId = await resolveEffectiveUserId(userId);
+    const localKey = getScopedKey('biocode_projects', validUserId);
 
     const parsedTags = Array.isArray(project.tags)
       ? project.tags
@@ -1687,23 +1833,28 @@ export const bioService = {
       updated_at: new Date().toISOString()
     };
 
-    if (!isSupabaseConfigured) {
+    if (!isSupabaseConfigured || !validUserId) {
       try {
-        const local = getLocalItem('biocode_projects', '[]');
-        const list = JSON.parse(local);
+        const list: Project[] = JSON.parse(getLocalItem(localKey, '[]'));
+        if (list.some((p) => p.name.trim().toLowerCase() === trimmedName.toLowerCase())) {
+          throw new Error(`A project named "${trimmedName}" already exists. Please choose a unique project name.`);
+        }
         list.unshift(newProj);
-        setLocalItem('biocode_projects', JSON.stringify(list.slice(0, 50)));
-      } catch {}
+        setLocalItem(localKey, JSON.stringify(list.slice(0, 50)));
+      } catch (err: any) {
+        if (err?.message?.includes('already exists')) throw err;
+      }
+      requestManager.invalidateCache();
       return newProj;
     }
 
-    // Check duplicate name for current user
+    // Check duplicate name for current visitor
     try {
-      let dupQuery = supabase.from('projects').select('id, name').ilike('name', trimmedName);
-      if (validUserId) {
-        dupQuery = dupQuery.eq('user_id', validUserId);
-      }
-      const { data: existing } = await dupQuery;
+      const { data: existing } = await supabase
+        .from('projects')
+        .select('id, name')
+        .eq('user_id', validUserId)
+        .ilike('name', trimmedName);
       if (existing && existing.length > 0) {
         throw new Error(`A project named "${trimmedName}" already exists. Please choose a unique project name.`);
       }
@@ -1714,24 +1865,36 @@ export const bioService = {
     }
 
     try {
-      const insertData: any = {
+      const baseInsertData: any = {
         id: generatedId,
+        user_id: validUserId,
         name: trimmedName,
         organism: project.organism || 'Homo sapiens',
         description: (project.description || '').trim(),
         project_type: project.project_type || 'Genomic Analysis',
         status: project.status || 'Active'
       };
+      const extendedInsertData: any = {
+        ...baseInsertData,
+        research_objective: (project.research_objective || '').trim(),
+        tags: parsedTags
+      };
 
-      if (validUserId) {
-        insertData.user_id = validUserId;
-      }
-
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('projects')
-        .insert(insertData)
+        .insert(extendedInsertData)
         .select()
         .single();
+
+      if (error && (error.code === 'PGRST204' || error.code === '42703' || (error.message || '').includes('column'))) {
+        const fallbackRes = await supabase
+          .from('projects')
+          .insert(baseInsertData)
+          .select()
+          .single();
+        data = fallbackRes.data;
+        error = fallbackRes.error;
+      }
 
       if (error) {
         console.warn('[BioService] Supabase createProject error:', error.message || error);
@@ -1745,8 +1908,8 @@ export const bioService = {
         name: data.name,
         organism: data.organism,
         description: data.description || '',
-        research_objective: data.research_objective || '',
-        tags: parsedTags,
+        research_objective: data.research_objective || newProj.research_objective || '',
+        tags: Array.isArray(data.tags) ? data.tags : parsedTags,
         project_type: data.project_type,
         status: data.status || 'Active',
         sequencesCount: 0,
@@ -1761,8 +1924,10 @@ export const bioService = {
     }
   },
 
-  async updateProject(projectId: string, updates: Partial<Project>): Promise<Project> {
+  async updateProject(projectId: string, updates: Partial<Project>, userId?: string): Promise<Project> {
     if (!projectId) throw new Error('Project ID is required.');
+    const effectiveUserId = await resolveEffectiveUserId(userId);
+    const localKey = getScopedKey('biocode_projects', effectiveUserId);
 
     const updatePayload: any = {
       updated_at: new Date().toISOString()
@@ -1774,13 +1939,30 @@ export const bioService = {
     if (updates.organism !== undefined) updatePayload.organism = updates.organism;
     if (updates.project_type !== undefined) updatePayload.project_type = updates.project_type;
 
-    if (isSupabaseConfigured) {
-      const { data, error } = await supabase
+    const extendedPayload: any = { ...updatePayload };
+    if (updates.research_objective !== undefined) extendedPayload.research_objective = updates.research_objective.trim();
+    if (updates.tags !== undefined) extendedPayload.tags = Array.isArray(updates.tags) ? updates.tags : [];
+
+    if (isSupabaseConfigured && effectiveUserId) {
+      let { data, error } = await supabase
         .from('projects')
-        .update(updatePayload)
+        .update(extendedPayload)
         .eq('id', projectId)
+        .eq('user_id', effectiveUserId)
         .select()
         .single();
+
+      if (error && (error.code === 'PGRST204' || error.code === '42703' || (error.message || '').includes('column'))) {
+        const fallbackRes = await supabase
+          .from('projects')
+          .update(updatePayload)
+          .eq('id', projectId)
+          .eq('user_id', effectiveUserId)
+          .select()
+          .single();
+        data = fallbackRes.data;
+        error = fallbackRes.error;
+      }
 
       if (error) throw new Error(error.message || 'Failed to update project.');
       requestManager.invalidateCache();
@@ -1790,8 +1972,8 @@ export const bioService = {
         name: data.name,
         organism: data.organism,
         description: data.description || '',
-        research_objective: data.research_objective || '',
-        tags: Array.isArray(updates.tags) ? updates.tags : [],
+        research_objective: data.research_objective || updates.research_objective || '',
+        tags: Array.isArray(data.tags) ? data.tags : Array.isArray(updates.tags) ? updates.tags : [],
         project_type: data.project_type,
         status: data.status,
         created_at: data.created_at,
@@ -1799,52 +1981,94 @@ export const bioService = {
       };
     }
 
-    const current = await this.getProjectById(projectId);
-    return { ...(current || ({} as any)), ...updates, updated_at: updatePayload.updated_at };
+    const list: Project[] = JSON.parse(getLocalItem(localKey, '[]'));
+    const existing = list.find((p) => p.id === projectId);
+    const updatedProj: Project = {
+      ...(existing || ({} as any)),
+      ...updates,
+      id: projectId,
+      updated_at: updatePayload.updated_at
+    };
+    const nextList = list.some((p) => p.id === projectId)
+      ? list.map((p) => (p.id === projectId ? updatedProj : p))
+      : [updatedProj, ...list];
+    setLocalItem(localKey, JSON.stringify(nextList));
+    requestManager.invalidateCache();
+    return updatedProj;
   },
 
-  async archiveProject(projectId: string): Promise<Project> {
-    return this.updateProject(projectId, { status: 'Archived' });
+  async archiveProject(projectId: string, userId?: string): Promise<Project> {
+    return this.updateProject(projectId, { status: 'Archived' }, userId);
   },
 
-  async deleteProject(projectId: string): Promise<boolean> {
+  async deleteProject(projectId: string, userId?: string): Promise<boolean> {
     if (!projectId) throw new Error('Project ID is required.');
+    const effectiveUserId = await resolveEffectiveUserId(userId);
+    const localKey = getScopedKey('biocode_projects', effectiveUserId);
 
-    if (isSupabaseConfigured) {
+    if (isSupabaseConfigured && effectiveUserId) {
       const { error } = await supabase
         .from('projects')
         .delete()
-        .eq('id', projectId);
+        .eq('id', projectId)
+        .eq('user_id', effectiveUserId);
 
       if (error) throw new Error(error.message || 'Failed to delete project.');
     }
 
     try {
-      const local = getLocalItem('biocode_projects', '[]');
+      const local = getLocalItem(localKey, '[]');
       const list = JSON.parse(local).filter((p: any) => p.id !== projectId);
-      setLocalItem('biocode_projects', JSON.stringify(list));
+      setLocalItem(localKey, JSON.stringify(list));
     } catch {}
 
     requestManager.invalidateCache();
     return true;
   },
 
-  async getProjectSequences(projectId: string): Promise<SequenceRecord[]> {
-    if (!projectId || !isSupabaseConfigured) return [];
+  async getProjectSequences(projectId: string, userId?: string): Promise<SequenceRecord[]> {
+    if (!projectId) return [];
+    const effectiveUserId = await resolveEffectiveUserId(userId);
+
+    if (!isSupabaseConfigured || !effectiveUserId) {
+      try {
+        const links: any[] = JSON.parse(getLocalItem(getScopedKey('biocode_project_sequences', effectiveUserId), '[]'));
+        const localAna: AnalysisRecord[] = JSON.parse(getLocalItem(getScopedKey('biocode_analyses', effectiveUserId), '[]'));
+        const localSeqs: SequenceRecord[] = JSON.parse(getLocalItem(getScopedKey('biocode_sequence_records', effectiveUserId), '[]'));
+
+        const ids = new Set<string>();
+        links.filter((l) => l.project_id === projectId && l.sequence_id).forEach((l) => ids.add(l.sequence_id));
+        localAna.filter((a) => a.project_id === projectId && a.sequence_id).forEach((a) => ids.add(a.sequence_id!));
+
+        if (ids.size === 0) return [];
+        return localSeqs.filter((s) => ids.has(s.id));
+      } catch {
+        return [];
+      }
+    }
+
     try {
-      // 1. Join table records (project_sequences junction table if exists)
+      // 1. Join table records scoped to visitor
       let psIds: string[] = [];
       try {
-        const { data: psData, error: psErr } = await supabase.from('project_sequences').select('sequence_id').eq('project_id', projectId);
+        const { data: psData, error: psErr } = await supabase
+          .from('project_sequences')
+          .select('sequence_id')
+          .eq('project_id', projectId)
+          .eq('user_id', effectiveUserId);
         if (!psErr && psData) {
           psIds = psData.map((row: any) => row.sequence_id).filter(Boolean);
         }
       } catch {}
 
-      // 2. Project analyses sequence references (REAL relationship in existing live schema)
+      // 2. Project analyses sequence references scoped to visitor
       let anaSeqIds: string[] = [];
       try {
-        const { data: anaData, error: anaErr } = await supabase.from('analyses').select('sequence_id').eq('project_id', projectId);
+        const { data: anaData, error: anaErr } = await supabase
+          .from('analyses')
+          .select('sequence_id')
+          .eq('project_id', projectId)
+          .eq('user_id', effectiveUserId);
         if (!anaErr && anaData) {
           anaSeqIds = anaData.map((a: any) => a.sequence_id).filter(Boolean);
         }
@@ -1858,6 +2082,7 @@ export const bioService = {
         .from('sequence_records')
         .select('*')
         .in('id', allIds)
+        .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -1884,22 +2109,41 @@ export const bioService = {
     }
   },
 
-  async addSequenceToProject(projectId: string, sequenceId: string): Promise<boolean> {
+  async addSequenceToProject(projectId: string, sequenceId: string, userId?: string): Promise<boolean> {
     if (!projectId || !sequenceId) {
       throw new Error('Project ID and Sequence ID are required.');
     }
 
-    if (!isSupabaseConfigured) return true;
+    const effectiveUserId = await resolveEffectiveUserId(userId);
+
+    if (!isSupabaseConfigured || !effectiveUserId) {
+      try {
+        const key = getScopedKey('biocode_project_sequences', effectiveUserId);
+        const links: any[] = JSON.parse(getLocalItem(key, '[]'));
+        const exists = links.some((l) => l.project_id === projectId && l.sequence_id === sequenceId);
+        if (!exists) {
+          links.unshift({
+            project_id: projectId,
+            sequence_id: sequenceId,
+            user_id: effectiveUserId || null,
+            created_at: new Date().toISOString()
+          });
+          setLocalItem(key, JSON.stringify(links));
+        }
+      } catch {}
+      requestManager.invalidateCache();
+      return true;
+    }
 
     let success = false;
     let lastError = '';
 
-    // 1. Try project_sequences junction table
+    // 1. Try project_sequences junction table with user_id
     try {
       const { error: psUpsertErr } = await supabase
         .from('project_sequences')
         .upsert(
-          { project_id: projectId, sequence_id: sequenceId },
+          { project_id: projectId, sequence_id: sequenceId, user_id: effectiveUserId },
           { onConflict: 'project_id,sequence_id' }
         );
 
@@ -1912,13 +2156,14 @@ export const bioService = {
       lastError = e?.message || String(e);
     }
 
-    // 2. Primary/fallback relationship via `analyses` table (present in live schema)
+    // 2. Primary/fallback relationship via `analyses` table scoped to visitor
     try {
       const { data: existingAna } = await supabase
         .from('analyses')
         .select('id')
         .eq('project_id', projectId)
         .eq('sequence_id', sequenceId)
+        .eq('user_id', effectiveUserId)
         .maybeSingle();
 
       if (existingAna) {
@@ -1928,6 +2173,7 @@ export const bioService = {
           .from('analyses')
           .insert({
             id: generateUUID(),
+            user_id: effectiveUserId,
             project_id: projectId,
             sequence_id: sequenceId,
             analysis_type: 'Sequence Association',
@@ -1955,42 +2201,74 @@ export const bioService = {
     return true;
   },
 
-  async removeSequenceFromProject(projectId: string, sequenceId: string): Promise<boolean> {
+  async removeSequenceFromProject(projectId: string, sequenceId: string, userId?: string): Promise<boolean> {
     if (!projectId || !sequenceId) {
       throw new Error('Project ID and Sequence ID are required.');
     }
 
-    if (!isSupabaseConfigured) return true;
+    const effectiveUserId = await resolveEffectiveUserId(userId);
 
-    // 1. Delete from project_sequences if exists
+    if (!isSupabaseConfigured || !effectiveUserId) {
+      try {
+        const linksKey = getScopedKey('biocode_project_sequences', effectiveUserId);
+        const links = JSON.parse(getLocalItem(linksKey, '[]')).filter(
+          (l: any) => !(l.project_id === projectId && l.sequence_id === sequenceId)
+        );
+        setLocalItem(linksKey, JSON.stringify(links));
+
+        const anaKey = getScopedKey('biocode_analyses', effectiveUserId);
+        const analyses = JSON.parse(getLocalItem(anaKey, '[]')).filter(
+          (a: any) => !(a.project_id === projectId && a.sequence_id === sequenceId)
+        );
+        setLocalItem(anaKey, JSON.stringify(analyses));
+      } catch {}
+      requestManager.invalidateCache();
+      return true;
+    }
+
+    // 1. Delete from project_sequences scoped to visitor
     try {
       await supabase
         .from('project_sequences')
         .delete()
         .eq('project_id', projectId)
-        .eq('sequence_id', sequenceId);
+        .eq('sequence_id', sequenceId)
+        .eq('user_id', effectiveUserId);
     } catch {}
 
-    // 2. Delete association records from analyses
+    // 2. Delete association records from analyses scoped to visitor
     try {
       await supabase
         .from('analyses')
         .delete()
         .eq('project_id', projectId)
-        .eq('sequence_id', sequenceId);
+        .eq('sequence_id', sequenceId)
+        .eq('user_id', effectiveUserId);
     } catch {}
 
     requestManager.invalidateCache();
     return true;
   },
 
-  async getProjectAnalyses(projectId: string): Promise<AnalysisRecord[]> {
-    if (!projectId || !isSupabaseConfigured) return [];
+  async getProjectAnalyses(projectId: string, userId?: string): Promise<AnalysisRecord[]> {
+    if (!projectId) return [];
+    const effectiveUserId = await resolveEffectiveUserId(userId);
+
+    if (!isSupabaseConfigured || !effectiveUserId) {
+      try {
+        const localAna: AnalysisRecord[] = JSON.parse(getLocalItem(getScopedKey('biocode_analyses', effectiveUserId), '[]'));
+        return localAna.filter((a) => a.project_id === projectId);
+      } catch {
+        return [];
+      }
+    }
+
     try {
       const { data, error } = await supabase
         .from('analyses')
         .select('*, sequence_records(*)')
         .eq('project_id', projectId)
+        .eq('user_id', effectiveUserId)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -2018,10 +2296,10 @@ export const bioService = {
     }
   },
 
-  async getProjectVersions(projectId: string): Promise<any[]> {
-    if (!projectId || !isSupabaseConfigured) return [];
+  async getProjectVersions(projectId: string, userId?: string): Promise<any[]> {
+    if (!projectId) return [];
     try {
-      const analyses = await this.getProjectAnalyses(projectId);
+      const analyses = await this.getProjectAnalyses(projectId, userId);
       const safeAnalyses = Array.isArray(analyses) ? analyses : [];
       const versions: any[] = [];
 
@@ -2053,13 +2331,13 @@ export const bioService = {
     }
   },
 
-  async getProjectActivities(projectId: string): Promise<any[]> {
-    if (!projectId || !isSupabaseConfigured) return [];
+  async getProjectActivities(projectId: string, userId?: string): Promise<any[]> {
+    if (!projectId) return [];
     try {
       const [project, sequences, analyses] = await Promise.all([
-        this.getProjectById(projectId),
-        this.getProjectSequences(projectId),
-        this.getProjectAnalyses(projectId)
+        this.getProjectById(projectId, userId),
+        this.getProjectSequences(projectId, userId),
+        this.getProjectAnalyses(projectId, userId)
       ]);
 
       const activities: any[] = [];
@@ -2118,42 +2396,46 @@ export const bioService = {
 
   /**
    * System Statistics Aggregator
-   * Calculates real Supabase data when connected:
-   * Total Analyses: COUNT from analyses
-   * Sequences Processed: COUNT or SUM from sequence_records / analyses
-   * Active Projects: COUNT from projects
+   * Strictly isolated per visitor/anonymous session ID.
    */
   async getSystemStats(userId?: string, forceRefresh: boolean = false): Promise<SystemStats> {
+    const effectiveUserId = await resolveEffectiveUserId(userId);
+    const projLocalKey = getScopedKey('biocode_projects', effectiveUserId);
+    const anaLocalKey = getScopedKey('biocode_analyses', effectiveUserId);
+
     return requestManager.execute(
       async () => {
-        if (!isSupabaseConfigured) {
-          const localProj = JSON.parse(getLocalItem('biocode_projects', '[]'));
-          const localAna = JSON.parse(getLocalItem('biocode_analyses', '[]'));
+        if (!isSupabaseConfigured || !effectiveUserId) {
+          const localProj = JSON.parse(getLocalItem(projLocalKey, '[]'));
+          const localAna = JSON.parse(getLocalItem(anaLocalKey, '[]'));
           const totalBp = localAna.reduce((acc: number, curr: any) => acc + (curr.analyzed_length || curr.total_sequence_length || 0), 0);
           return {
             totalAnalyses: localAna.length,
             activeProjects: localProj.filter((p: any) => p.status === 'Active').length || localProj.length,
             sequencesProcessed: totalBp,
-            systemStatus: 'Unconfigured',
+            systemStatus: isSupabaseConfigured ? 'Connected' : 'Unconfigured',
             persistenceStorage: 'local_fallback'
           };
         }
 
         try {
-          // 1. Fetch exact analysis count and lengths from Supabase
+          // 1. Fetch exact analysis count scoped to effectiveUserId
           const { count: anaCount, error: anaCountErr } = await supabase
             .from('analyses')
-            .select('*', { count: 'exact', head: true });
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', effectiveUserId);
 
-          // 2. Fetch active projects count from Supabase
+          // 2. Fetch active projects count scoped to effectiveUserId
           const { count: projCount, error: projCountErr } = await supabase
             .from('projects')
-            .select('*', { count: 'exact', head: true });
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', effectiveUserId);
 
-          // 3. Fetch sequence records or analyzed lengths for sequence processed aggregation
-          const { data: anaRows, error: anaRowsErr } = await supabase
+          // 3. Fetch analyzed lengths scoped to effectiveUserId
+          const { data: anaRows } = await supabase
             .from('analyses')
-            .select('analyzed_length, total_sequence_length');
+            .select('analyzed_length, total_sequence_length')
+            .eq('user_id', effectiveUserId);
 
           if (anaCountErr || projCountErr) {
             if (requestManager.isRateLimitError(anaCountErr || projCountErr)) {
@@ -2177,10 +2459,10 @@ export const bioService = {
           };
         } catch (e: any) {
           if (requestManager.isRateLimitError(e)) throw e;
-          console.warn('[BioService] Real Supabase stats query failed, checking local storage:', e?.message || e);
+          console.warn('[BioService] Real Supabase stats query failed, checking scoped local storage:', e?.message || e);
           try {
-            const localProj = JSON.parse(getLocalItem('biocode_projects', '[]'));
-            const localAna = JSON.parse(getLocalItem('biocode_analyses', '[]'));
+            const localProj = JSON.parse(getLocalItem(projLocalKey, '[]'));
+            const localAna = JSON.parse(getLocalItem(anaLocalKey, '[]'));
             const totalBp = localAna.reduce((acc: number, curr: any) => acc + (curr.analyzed_length || curr.total_sequence_length || 0), 0);
             return {
               totalAnalyses: localAna.length,
@@ -2201,7 +2483,7 @@ export const bioService = {
         }
       },
       {
-        key: `getSystemStats_${userId || 'anon'}`,
+        key: `getSystemStats_${effectiveUserId || 'guest'}`,
         ttlMs: 30000,
         forceRefresh
       }
@@ -2209,7 +2491,7 @@ export const bioService = {
   },
 
   /**
-   * Save a mutated / edited sequence version record
+   * Save a mutated / edited sequence version record scoped to visitor
    */
   async saveSequenceVersion(
     versionData: Omit<SequenceVersionRecord, 'id' | 'created_at'> & {
@@ -2218,10 +2500,15 @@ export const bioService = {
       original_sequence?: string | null;
       modified_sequence?: string | null;
       mutation_summary?: any;
-    }
+      user_id?: string | null;
+    },
+    userId?: string
   ): Promise<PersistenceResult<SequenceVersionRecord>> {
     const versionId = generateUUID();
     const now = new Date().toISOString();
+    const effectiveUserId = await resolveEffectiveUserId(userId || versionData.user_id);
+    const verLocalKey = getScopedKey('biocode_sequence_versions', effectiveUserId);
+
     const seqRecId = isValidUUID(versionData.sequence_record_id) 
       ? versionData.sequence_record_id 
       : isValidUUID(versionData.sequence_id) 
@@ -2246,19 +2533,20 @@ export const bioService = {
 
     console.log(`[SEQUENCE_VERSION] Save attempt: Version v${record.version_number} | original length: ${record.original_length} | modified length: ${record.modified_length} | changes count: ${record.total_changes}`);
 
-    // Always persist to local storage for immediate session resilience
+    // Persist to scoped local storage for immediate session resilience
     try {
-      const localVersions = JSON.parse(getLocalItem('biocode_sequence_versions', '[]'));
+      const localVersions = JSON.parse(getLocalItem(verLocalKey, '[]'));
       const filtered = localVersions.filter((v: any) => v.id !== record.id);
-      setLocalItem('biocode_sequence_versions', JSON.stringify([record, ...filtered].slice(0, 100)));
+      setLocalItem(verLocalKey, JSON.stringify([record, ...filtered].slice(0, 100)));
     } catch (localErr) {
       console.warn('[SEQUENCE_VERSION] Local storage write notice:', localErr);
     }
 
-    if (isSupabaseConfigured) {
+    if (isSupabaseConfigured && effectiveUserId) {
       try {
         const payload: any = {
           id: record.id,
+          user_id: effectiveUserId,
           sequence_id: seqRecId,
           sequence_record_id: seqRecId,
           parent_version_id: record.parent_version_id,
@@ -2333,14 +2621,18 @@ export const bioService = {
   },
 
   /**
-   * Retrieve sequence versions for a given sequence record
+   * Retrieve sequence versions for a given sequence record scoped to visitor
    */
-  async getSequenceVersions(sequenceRecordId?: string | null): Promise<SequenceVersionRecord[]> {
-    if (isSupabaseConfigured && sequenceRecordId && isValidUUID(sequenceRecordId)) {
+  async getSequenceVersions(sequenceRecordId?: string | null, userId?: string): Promise<SequenceVersionRecord[]> {
+    const effectiveUserId = await resolveEffectiveUserId(userId);
+    const verLocalKey = getScopedKey('biocode_sequence_versions', effectiveUserId);
+
+    if (isSupabaseConfigured && effectiveUserId && sequenceRecordId && isValidUUID(sequenceRecordId)) {
       try {
         const { data, error } = await supabase
           .from('sequence_versions')
           .select('*')
+          .eq('user_id', effectiveUserId)
           .or(`sequence_record_id.eq.${sequenceRecordId},sequence_id.eq.${sequenceRecordId}`)
           .order('version_number', { ascending: false });
 
@@ -2352,9 +2644,9 @@ export const bioService = {
       }
     }
 
-    // Fallback to local storage
+    // Fallback to scoped local storage
     try {
-      const localVersions = JSON.parse(getLocalItem('biocode_sequence_versions', '[]'));
+      const localVersions = JSON.parse(getLocalItem(verLocalKey, '[]'));
       if (sequenceRecordId) {
         return localVersions.filter(
           (v: any) => v.sequence_record_id === sequenceRecordId || v.sequence_id === sequenceRecordId
@@ -2363,6 +2655,252 @@ export const bioService = {
       return localVersions;
     } catch {
       return [];
+    }
+  },
+
+  /**
+   * Exports all records strictly owned by the active visitor as a portable backup snapshot.
+   */
+  async exportWorkspaceSnapshot(userId?: string): Promise<{
+    schemaVersion: number;
+    exportedAt: string;
+    workspaceScope: string;
+    projects: Project[];
+    sequences: SequenceRecord[];
+    analyses: AnalysisRecord[];
+    versions: SequenceVersionRecord[];
+    projectLinks: Array<{ project_id: string; sequence_id: string; created_at?: string }>;
+  }> {
+    const effectiveUserId = await resolveEffectiveUserId(userId);
+    const scopeId = isValidUUID(effectiveUserId) ? effectiveUserId! : getOrCreateGuestScopeId();
+
+    const [projects, sequences, analyses, versions] = await Promise.all([
+      this.getProjects(effectiveUserId || undefined, true),
+      this.getSequenceRecords(effectiveUserId || undefined, true),
+      this.getAnalyses(effectiveUserId || undefined, true),
+      this.getSequenceVersions(undefined, effectiveUserId || undefined)
+    ]);
+
+    let projectLinks: Array<{ project_id: string; sequence_id: string; created_at?: string }> = [];
+    if (isSupabaseConfigured && effectiveUserId) {
+      try {
+        const { data } = await supabase
+          .from('project_sequences')
+          .select('project_id, sequence_id, created_at')
+          .eq('user_id', effectiveUserId);
+        if (Array.isArray(data)) projectLinks = data;
+      } catch {}
+    } else {
+      try {
+        projectLinks = JSON.parse(getLocalItem(getScopedKey('biocode_project_sequences', effectiveUserId), '[]'));
+      } catch {}
+    }
+
+    return {
+      schemaVersion: 1,
+      exportedAt: new Date().toISOString(),
+      workspaceScope: scopeId,
+      projects,
+      sequences,
+      analyses,
+      versions,
+      projectLinks
+    };
+  },
+
+  /**
+   * Restores/merges a portable workspace snapshot into the active visitor's workspace
+   * without deleting or overwriting any existing records.
+   */
+  async importWorkspaceSnapshot(
+    snapshot: any,
+    userId?: string
+  ): Promise<{ projectsImported: number; sequencesImported: number; analysesImported: number; versionsImported: number }> {
+    if (!snapshot || typeof snapshot !== 'object') {
+      throw new Error('Invalid workspace backup payload.');
+    }
+
+    const effectiveUserId = await resolveEffectiveUserId(userId);
+    const projects: any[] = Array.isArray(snapshot.projects) ? snapshot.projects : [];
+    const sequences: any[] = Array.isArray(snapshot.sequences) ? snapshot.sequences : [];
+    const analyses: any[] = Array.isArray(snapshot.analyses) ? snapshot.analyses : [];
+    const versions: any[] = Array.isArray(snapshot.versions) ? snapshot.versions : [];
+    const projectLinks: any[] = Array.isArray(snapshot.projectLinks) ? snapshot.projectLinks : [];
+
+    let projectsImported = 0;
+    let sequencesImported = 0;
+    let analysesImported = 0;
+    let versionsImported = 0;
+
+    if (isSupabaseConfigured && effectiveUserId) {
+      for (const p of projects) {
+        if (!p?.id || !p?.name) continue;
+        const { error } = await supabase.from('projects').upsert(
+          {
+            id: p.id,
+            user_id: effectiveUserId,
+            name: p.name,
+            organism: p.organism || 'Homo sapiens',
+            description: p.description || '',
+            research_objective: p.research_objective || '',
+            tags: Array.isArray(p.tags) ? p.tags : [],
+            project_type: p.project_type || 'Genomic Analysis',
+            status: p.status || 'Active',
+            created_at: p.created_at || new Date().toISOString(),
+            updated_at: p.updated_at || new Date().toISOString()
+          },
+          { onConflict: 'id', ignoreDuplicates: true }
+        );
+        if (!error) projectsImported++;
+      }
+
+      for (const s of sequences) {
+        if (!s?.id || !s?.accession) continue;
+        const { error } = await supabase.from('sequence_records').upsert(
+          {
+            id: s.id,
+            user_id: effectiveUserId,
+            source: s.source || 'Workspace Backup',
+            accession: s.accession,
+            version: s.version || null,
+            organism: s.organism || 'Homo sapiens',
+            molecule_type: s.molecule_type || null,
+            sequence_type: s.sequence_type || 'Genomic DNA',
+            definition: s.definition || s.accession,
+            total_length: s.total_length || 0,
+            topology: s.topology || 'linear',
+            sequence: s.sequence || null,
+            metadata: s.metadata || {},
+            created_at: s.created_at || new Date().toISOString(),
+            updated_at: s.updated_at || new Date().toISOString()
+          },
+          { onConflict: 'id', ignoreDuplicates: true }
+        );
+        if (!error) sequencesImported++;
+      }
+
+      for (const l of projectLinks) {
+        if (!l?.project_id || !l?.sequence_id) continue;
+        try {
+          await supabase.from('project_sequences').upsert(
+            { project_id: l.project_id, sequence_id: l.sequence_id, user_id: effectiveUserId },
+            { onConflict: 'project_id,sequence_id', ignoreDuplicates: true }
+          );
+        } catch {}
+      }
+
+      for (const a of analyses) {
+        if (!a?.id) continue;
+        const { error } = await supabase.from('analyses').upsert(
+          {
+            id: a.id,
+            user_id: effectiveUserId,
+            sequence_id: isValidUUID(a.sequence_id) ? a.sequence_id : null,
+            project_id: isValidUUID(a.project_id) ? a.project_id : null,
+            analysis_type: a.analysis_type || 'Sequence Analysis',
+            analysis_scope: a.analysis_scope || 'Complete Sequence',
+            total_sequence_length: a.total_sequence_length || 0,
+            analyzed_length: a.analyzed_length || 0,
+            sequence_type: a.sequence_type || 'DNA',
+            input_source: a.input_source || 'Workspace Backup',
+            status: a.status || 'Completed',
+            result_summary: a.result_summary || null,
+            results: a.results || {},
+            created_at: a.created_at || new Date().toISOString(),
+            updated_at: a.updated_at || new Date().toISOString()
+          },
+          { onConflict: 'id', ignoreDuplicates: true }
+        );
+        if (!error) analysesImported++;
+      }
+
+      for (const v of versions) {
+        if (!v?.id) continue;
+        const { error } = await supabase.from('sequence_versions').upsert(
+          {
+            id: v.id,
+            user_id: effectiveUserId,
+            sequence_id: isValidUUID(v.sequence_record_id || (v as any).sequence_id) ? (v.sequence_record_id || (v as any).sequence_id) : null,
+            sequence_record_id: isValidUUID(v.sequence_record_id || (v as any).sequence_id) ? (v.sequence_record_id || (v as any).sequence_id) : null,
+            sequence_data: v.sequence_data || '',
+            version_number: v.version_number || 2,
+            changes: v.changes || [],
+            original_length: v.original_length || 0,
+            modified_length: v.modified_length || 0,
+            total_changes: v.total_changes || 0,
+            status: v.status || 'Completed',
+            metadata: v.metadata || {},
+            created_at: v.created_at || new Date().toISOString(),
+            updated_at: v.updated_at || new Date().toISOString()
+          },
+          { onConflict: 'id', ignoreDuplicates: true }
+        );
+        if (!error) versionsImported++;
+      }
+    } else {
+      const mergeById = (keyName: string, items: any[], rebindUser: boolean = true) => {
+        const key = getScopedKey(keyName, effectiveUserId);
+        const existing: any[] = JSON.parse(getLocalItem(key, '[]'));
+        const existingIds = new Set(existing.map((item) => item.id));
+        let added = 0;
+        for (const item of items) {
+          if (!item?.id || existingIds.has(item.id)) continue;
+          existing.push(rebindUser ? { ...item, user_id: effectiveUserId || item.user_id } : item);
+          existingIds.add(item.id);
+          added++;
+        }
+        setLocalItem(key, JSON.stringify(existing));
+        return added;
+      };
+
+      projectsImported = mergeById('biocode_projects', projects);
+      sequencesImported = mergeById('biocode_sequence_records', sequences);
+      analysesImported = mergeById('biocode_analyses', analyses);
+      versionsImported = mergeById('biocode_sequence_versions', versions);
+
+      const linksKey = getScopedKey('biocode_project_sequences', effectiveUserId);
+      const existingLinks: any[] = JSON.parse(getLocalItem(linksKey, '[]'));
+      for (const l of projectLinks) {
+        if (!l?.project_id || !l?.sequence_id) continue;
+        if (!existingLinks.some((e) => e.project_id === l.project_id && e.sequence_id === l.sequence_id)) {
+          existingLinks.push({ ...l, user_id: effectiveUserId || null });
+        }
+      }
+      setLocalItem(linksKey, JSON.stringify(existingLinks));
+    }
+
+    requestManager.invalidateCache();
+    return { projectsImported, sequencesImported, analysesImported, versionsImported };
+  },
+
+  /**
+   * Migrates any unlinked local browser guest records into an authenticated/anonymous Supabase user
+   * when transitioning from local guest fallback to a cloud session without losing work.
+   */
+  async migrateLocalGuestToUser(targetUserId: string): Promise<void> {
+    if (!isSupabaseConfigured || !isValidUUID(targetUserId)) return;
+    const guestScope = getOrCreateGuestScopeId();
+    if (!guestScope || guestScope === targetUserId) return;
+
+    const markerKey = `biocode_migrated_${guestScope}_to_${targetUserId}`;
+    if (getLocalItem(markerKey, '') === '1') return;
+
+    try {
+      const projects = JSON.parse(getLocalItem(`biocode_projects_${guestScope}`, '[]'));
+      const sequences = JSON.parse(getLocalItem(`biocode_sequence_records_${guestScope}`, '[]'));
+      const analyses = JSON.parse(getLocalItem(`biocode_analyses_${guestScope}`, '[]'));
+      const versions = JSON.parse(getLocalItem(`biocode_sequence_versions_${guestScope}`, '[]'));
+      const projectLinks = JSON.parse(getLocalItem(`biocode_project_sequences_${guestScope}`, '[]'));
+
+      if (projects.length || sequences.length || analyses.length || versions.length || projectLinks.length) {
+        await this.importWorkspaceSnapshot(
+          { projects, sequences, analyses, versions, projectLinks },
+          targetUserId
+        );
+      }
+      setLocalItem(markerKey, '1');
+    } catch (err) {
+      console.warn('[BioService] Guest-to-cloud migration deferred:', err);
     }
   }
 };

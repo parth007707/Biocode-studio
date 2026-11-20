@@ -697,14 +697,14 @@ export const SequenceEditorWorkspace: React.FC<SequenceEditorWorkspaceProps> = (
       {/* ========================================================================= */}
       {/* 2. TAB CONTROLS                                                           */}
       {/* ========================================================================= */}
-      <div className="px-5 pt-3 bg-slate-100/70 border-b border-[#E2E8F0] flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-2">
+      <div className="px-3 sm:px-5 pt-3 pb-2 xl:pb-0 bg-slate-100/70 border-b border-[#E2E8F0] flex items-center justify-between flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 max-w-full">
           <button
             type="button"
             onClick={() => setActiveTab('editor')}
-            className={`px-4 py-2 text-xs font-semibold rounded-t-xl transition-all flex items-center gap-2 cursor-pointer border-t border-x ${
+            className={`px-3 sm:px-4 py-2 text-xs font-semibold rounded-lg xl:rounded-b-none xl:rounded-t-xl transition-all flex items-center gap-2 cursor-pointer border xl:border-b-0 whitespace-nowrap shrink-0 ${
               activeTab === 'editor'
-                ? 'bg-white text-[#0284C7] border-[#E2E8F0] border-b-white shadow-2xs font-bold'
+                ? 'bg-white text-[#0284C7] border-[#E2E8F0] xl:border-b-white shadow-2xs font-bold'
                 : 'text-[#64748B] hover:text-[#0F172A] border-transparent hover:bg-slate-200/50'
             }`}
           >
@@ -715,9 +715,9 @@ export const SequenceEditorWorkspace: React.FC<SequenceEditorWorkspaceProps> = (
           <button
             type="button"
             onClick={() => setActiveTab('changes')}
-            className={`px-4 py-2 text-xs font-semibold rounded-t-xl transition-all flex items-center gap-2 cursor-pointer border-t border-x ${
+            className={`px-3 sm:px-4 py-2 text-xs font-semibold rounded-lg xl:rounded-b-none xl:rounded-t-xl transition-all flex items-center gap-2 cursor-pointer border xl:border-b-0 whitespace-nowrap shrink-0 ${
               activeTab === 'changes'
-                ? 'bg-white text-[#0284C7] border-[#E2E8F0] border-b-white shadow-2xs font-bold'
+                ? 'bg-white text-[#0284C7] border-[#E2E8F0] xl:border-b-white shadow-2xs font-bold'
                 : 'text-[#64748B] hover:text-[#0F172A] border-transparent hover:bg-slate-200/50'
             }`}
           >
@@ -733,9 +733,9 @@ export const SequenceEditorWorkspace: React.FC<SequenceEditorWorkspaceProps> = (
           <button
             type="button"
             onClick={() => setActiveTab('compare')}
-            className={`px-4 py-2 text-xs font-semibold rounded-t-xl transition-all flex items-center gap-2 cursor-pointer border-t border-x ${
+            className={`px-3 sm:px-4 py-2 text-xs font-semibold rounded-lg xl:rounded-b-none xl:rounded-t-xl transition-all flex items-center gap-2 cursor-pointer border xl:border-b-0 whitespace-nowrap shrink-0 ${
               activeTab === 'compare'
-                ? 'bg-white text-[#0284C7] border-[#E2E8F0] border-b-white shadow-2xs font-bold'
+                ? 'bg-white text-[#0284C7] border-[#E2E8F0] xl:border-b-white shadow-2xs font-bold'
                 : 'text-[#64748B] hover:text-[#0F172A] border-transparent hover:bg-slate-200/50'
             }`}
           >
@@ -746,9 +746,9 @@ export const SequenceEditorWorkspace: React.FC<SequenceEditorWorkspaceProps> = (
           <button
             type="button"
             onClick={() => setActiveTab('preview')}
-            className={`px-4 py-2 text-xs font-semibold rounded-t-xl transition-all flex items-center gap-2 cursor-pointer border-t border-x ${
+            className={`px-3 sm:px-4 py-2 text-xs font-semibold rounded-lg xl:rounded-b-none xl:rounded-t-xl transition-all flex items-center gap-2 cursor-pointer border xl:border-b-0 whitespace-nowrap shrink-0 ${
               activeTab === 'preview'
-                ? 'bg-white text-[#0284C7] border-[#E2E8F0] border-b-white shadow-2xs font-bold'
+                ? 'bg-white text-[#0284C7] border-[#E2E8F0] xl:border-b-white shadow-2xs font-bold'
                 : 'text-[#64748B] hover:text-[#0F172A] border-transparent hover:bg-slate-200/50'
             }`}
           >
@@ -764,9 +764,9 @@ export const SequenceEditorWorkspace: React.FC<SequenceEditorWorkspaceProps> = (
           <button
             type="button"
             onClick={() => setActiveTab('impact')}
-            className={`px-4 py-2 text-xs font-semibold rounded-t-xl transition-all flex items-center gap-2 cursor-pointer border-t border-x ${
+            className={`px-3 sm:px-4 py-2 text-xs font-semibold rounded-lg xl:rounded-b-none xl:rounded-t-xl transition-all flex items-center gap-2 cursor-pointer border xl:border-b-0 whitespace-nowrap shrink-0 ${
               activeTab === 'impact'
-                ? 'bg-white text-[#0284C7] border-[#E2E8F0] border-b-white shadow-2xs font-bold'
+                ? 'bg-white text-[#0284C7] border-[#E2E8F0] xl:border-b-white shadow-2xs font-bold'
                 : 'text-[#64748B] hover:text-[#0F172A] border-transparent hover:bg-slate-200/50'
             }`}
           >
@@ -794,7 +794,7 @@ export const SequenceEditorWorkspace: React.FC<SequenceEditorWorkspaceProps> = (
       {/* ========================================================================= */}
       {/* 3. MAIN WORKSPACE CONTENT AREA OR ANALYSIS JOB PROGRESS PANEL              */}
       {/* ========================================================================= */}
-      <div className="p-5 bg-white space-y-5">
+      <div className="p-3.5 sm:p-5 bg-white space-y-5">
         {/* Active Analysis Job Panel */}
         {activeJob && (
           <div className="mb-4">
@@ -1131,8 +1131,8 @@ export const SequenceEditorWorkspace: React.FC<SequenceEditorWorkspaceProps> = (
             </div>
 
             {/* RIGHT COLUMN: Live 3D Biological Visualization (~42%) */}
-            <div className="lg:col-span-5 flex flex-col space-y-3 sticky top-4">
-              <div className="flex items-center justify-between">
+            <div className="lg:col-span-5 flex flex-col space-y-3 lg:sticky lg:top-4">
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <span className="text-xs font-bold font-mono text-[#0284C7] flex items-center gap-1.5 uppercase tracking-wide">
                   <Activity className="w-3.5 h-3.5 text-[#0284C7]" />
                   <span>Live 3D Structure Preview</span>
@@ -1146,9 +1146,10 @@ export const SequenceEditorWorkspace: React.FC<SequenceEditorWorkspaceProps> = (
                 </span>
               </div>
 
-              <div className="h-[340px] rounded-2xl overflow-hidden border border-[#E2E8F0] shadow-md bg-[#F8FAFC]">
+              <div className="h-[280px] sm:h-[340px] rounded-2xl overflow-hidden border border-[#E2E8F0] shadow-md bg-[#F8FAFC]">
                 <Sequence3DViewer
                   sequence={workingSequence}
+                  originalSequence={originalSequence}
                   sequenceType={activeBioType}
                   accession={sourceAccession}
                   mutations={mutations}
@@ -1169,7 +1170,7 @@ export const SequenceEditorWorkspace: React.FC<SequenceEditorWorkspaceProps> = (
                 </div>
                 <div className="flex items-center justify-between">
                   <span>Structural Engine:</span>
-                  <span className="text-emerald-700 font-semibold">Live Procedural Synced</span>
+                  <span className="text-sky-700 font-semibold">Verified 3D Engine</span>
                 </div>
               </div>
             </div>
@@ -1186,6 +1187,8 @@ export const SequenceEditorWorkspace: React.FC<SequenceEditorWorkspaceProps> = (
               <Mutation3DViewer
                 wildTypeSequence={originalSequence}
                 mutantSequence={workingSequence}
+                sequenceType={activeBioType}
+                accession={sourceAccession}
                 mutations={mutations}
                 height={300}
                 className="mb-2 shadow-xl"
@@ -1259,7 +1262,7 @@ export const SequenceEditorWorkspace: React.FC<SequenceEditorWorkspaceProps> = (
                 </div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs font-mono">
+                  <table className="w-full min-w-[480px] text-left text-xs font-mono">
                     <thead>
                       <tr className="border-b border-[#E2E8F0] text-[#475569] text-[11px]">
                         <th className="py-2.5 px-3">Position</th>
@@ -1621,13 +1624,13 @@ export const SequenceEditorWorkspace: React.FC<SequenceEditorWorkspaceProps> = (
             </div>
 
             {/* Formatted Sequence Preview */}
-            <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-4 space-y-2.5 shadow-2xs">
-              <div className="flex items-center justify-between text-xs font-mono text-[#475569]">
+            <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-3.5 sm:p-4 space-y-2.5 shadow-2xs">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-[#475569]">
                 <span className="flex items-center gap-1.5 font-semibold text-[#0F172A]">
                   <FileCode className="w-3.5 h-3.5 text-[#0284C7]" />
                   Modified Sequence Preview
                 </span>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={handleCopyFASTA}
@@ -1738,9 +1741,9 @@ export const SequenceEditorWorkspace: React.FC<SequenceEditorWorkspaceProps> = (
       {/* ========================================================================= */}
       {/* 4. PROFESSIONAL EDITING ACTION BAR                                        */}
       {/* ========================================================================= */}
-      <div className="p-4 md:p-5 bg-slate-50 border-t border-[#E2E8F0] flex flex-wrap items-center justify-between gap-4">
+      <div className="p-3.5 sm:p-4 md:p-5 bg-slate-50 border-t border-[#E2E8F0] flex flex-wrap items-center justify-between gap-3 sm:gap-4">
         {/* Left: Undo, Redo, Reset, Cancel */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             disabled={historyIndex <= 0}
@@ -1784,7 +1787,7 @@ export const SequenceEditorWorkspace: React.FC<SequenceEditorWorkspaceProps> = (
         </div>
 
         {/* Right: Metrics & Primary Action Button */}
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-3 sm:gap-4 w-full sm:w-auto justify-end">
           <div className="text-right hidden sm:block">
             <div className="text-[11px] font-mono text-[#64748B]">
               Original: <span className="text-[#0F172A] font-bold">{formatNumber(cleanOriginalSeq?.length)} {unitLabel}</span> | Modified: <span className="text-[#0284C7] font-bold">{formatNumber(workingSequence?.length)} {unitLabel}</span>
@@ -1798,7 +1801,7 @@ export const SequenceEditorWorkspace: React.FC<SequenceEditorWorkspaceProps> = (
             type="button"
             disabled={isAnalyzing || !validationReport.isValid || !hasChanges}
             onClick={handleTriggerAnalysis}
-            className="px-6 py-2.5 rounded-xl bg-[#0284C7] hover:bg-[#0369A1] text-white font-semibold text-xs font-mono transition-all shadow-md shadow-sky-600/20 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            className="w-full sm:w-auto justify-center px-5 sm:px-6 py-2.5 rounded-xl bg-[#0284C7] hover:bg-[#0369A1] text-white font-semibold text-xs font-mono transition-all shadow-md shadow-sky-600/20 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             title={
               !hasChanges
                 ? 'No sequence modifications to analyze.'

@@ -67,11 +67,16 @@ create table if not exists public.projects (
   name text not null,
   organism text default 'Homo sapiens',
   description text,
+  research_objective text,
+  tags jsonb default '[]'::jsonb,
   project_type text default 'Genomic Analysis',
   status text check (status in ('Active', 'Archived', 'Processing')) default 'Active',
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
+
+alter table public.projects add column if not exists research_objective text;
+alter table public.projects add column if not exists tags jsonb default '[]'::jsonb;
 
 alter table public.projects enable row level security;
 
@@ -82,19 +87,20 @@ drop policy if exists "Users can delete their own projects" on public.projects;
 
 create policy "Users can view their own projects"
   on public.projects for select
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id);
 
 create policy "Users can insert their own projects"
   on public.projects for insert
-  with check (auth.uid() = user_id or user_id is null);
+  with check (auth.uid() = user_id);
 
 create policy "Users can update their own projects"
   on public.projects for update
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 
 create policy "Users can delete their own projects"
   on public.projects for delete
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id);
 
 
 -- ----------------------------------------------------------------------------
@@ -132,19 +138,20 @@ drop policy if exists "Users can delete sequence records" on public.sequence_rec
 
 create policy "Users can view sequence records"
   on public.sequence_records for select
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id);
 
 create policy "Users can insert sequence records"
   on public.sequence_records for insert
-  with check (auth.uid() = user_id or user_id is null);
+  with check (auth.uid() = user_id);
 
 create policy "Users can update sequence records"
   on public.sequence_records for update
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 
 create policy "Users can delete sequence records"
   on public.sequence_records for delete
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id);
 
 
 -- ----------------------------------------------------------------------------
@@ -161,6 +168,7 @@ create table if not exists public.project_sequences (
 
 create index if not exists idx_project_sequences_project_id on public.project_sequences(project_id);
 create index if not exists idx_project_sequences_sequence_id on public.project_sequences(sequence_id);
+create index if not exists idx_project_sequences_user_id on public.project_sequences(user_id);
 
 alter table public.project_sequences enable row level security;
 
@@ -171,19 +179,20 @@ drop policy if exists "Users can delete project sequences" on public.project_seq
 
 create policy "Users can view project sequences"
   on public.project_sequences for select
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id);
 
 create policy "Users can insert project sequences"
   on public.project_sequences for insert
-  with check (auth.uid() = user_id or user_id is null);
+  with check (auth.uid() = user_id);
 
 create policy "Users can update project sequences"
   on public.project_sequences for update
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 
 create policy "Users can delete project sequences"
   on public.project_sequences for delete
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id);
 
 
 -- ----------------------------------------------------------------------------
@@ -230,19 +239,20 @@ drop policy if exists "Users can delete their own analyses" on public.analyses;
 
 create policy "Users can view their own analyses"
   on public.analyses for select
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id);
 
 create policy "Users can insert their own analyses"
   on public.analyses for insert
-  with check (auth.uid() = user_id or user_id is null);
+  with check (auth.uid() = user_id);
 
 create policy "Users can update their own analyses"
   on public.analyses for update
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 
 create policy "Users can delete their own analyses"
   on public.analyses for delete
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id);
 
 
 -- ----------------------------------------------------------------------------
@@ -299,19 +309,20 @@ drop policy if exists "Users can delete sequence versions" on public.sequence_ve
 
 create policy "Users can view sequence versions"
   on public.sequence_versions for select
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id);
 
 create policy "Users can insert sequence versions"
   on public.sequence_versions for insert
-  with check (auth.uid() = user_id or user_id is null);
+  with check (auth.uid() = user_id);
 
 create policy "Users can update sequence versions"
   on public.sequence_versions for update
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 
 create policy "Users can delete sequence versions"
   on public.sequence_versions for delete
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id);
 
 
 -- ----------------------------------------------------------------------------
@@ -343,19 +354,20 @@ drop policy if exists "Users can delete their own ai conversations" on public.ai
 
 create policy "Users can view their own ai conversations"
   on public.ai_conversations for select
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id);
 
 create policy "Users can insert their own ai conversations"
   on public.ai_conversations for insert
-  with check (auth.uid() = user_id or user_id is null);
+  with check (auth.uid() = user_id);
 
 create policy "Users can update their own ai conversations"
   on public.ai_conversations for update
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 
 create policy "Users can delete their own ai conversations"
   on public.ai_conversations for delete
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id);
 
 
 -- ----------------------------------------------------------------------------
@@ -385,19 +397,20 @@ drop policy if exists "Users can delete their own ai messages" on public.ai_mess
 
 create policy "Users can view their own ai messages"
   on public.ai_messages for select
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id);
 
 create policy "Users can insert their own ai messages"
   on public.ai_messages for insert
-  with check (auth.uid() = user_id or user_id is null);
+  with check (auth.uid() = user_id);
 
 create policy "Users can update their own ai messages"
   on public.ai_messages for update
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 
 create policy "Users can delete their own ai messages"
   on public.ai_messages for delete
-  using (auth.uid() = user_id or user_id is null);
+  using (auth.uid() = user_id);
 
 
 -- ----------------------------------------------------------------------------

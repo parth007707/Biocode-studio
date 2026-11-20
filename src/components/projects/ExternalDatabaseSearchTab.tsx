@@ -351,7 +351,7 @@ export const ExternalDatabaseSearchTab: React.FC<ExternalDatabaseSearchTabProps>
 
         // Associate existing record with project
         setImportStatusMsg(`Associating existing record (${existingRecord.accession}) with project...`);
-        const assocOk = await bioService.addSequenceToProject(projectId, existingRecord.id);
+        const assocOk = await bioService.addSequenceToProject(projectId, existingRecord.id, userId);
         if (!assocOk) {
           throw new Error(`Failed to associate existing record ${existingRecord.accession} with project.`);
         }
@@ -398,10 +398,10 @@ export const ExternalDatabaseSearchTab: React.FC<ExternalDatabaseSearchTabProps>
       if (createRes.error) {
         if (createRes.error.toLowerCase().includes('duplicate') || createRes.error.toLowerCase().includes('unique')) {
           setImportStatusMsg(`Accession ${record.accession} exists in database. Fetching latest sequence list...`);
-          const latestRecords = await bioService.getSequenceRecords(undefined, true);
+          const latestRecords = await bioService.getSequenceRecords(userId, true);
           const match = (latestRecords || []).find(s => s.accession?.toLowerCase().includes(targetAccBase));
           if (match) {
-            await bioService.addSequenceToProject(projectId, match.id);
+            await bioService.addSequenceToProject(projectId, match.id, userId);
             onSuccess();
             onClose();
             return;
@@ -418,7 +418,7 @@ export const ExternalDatabaseSearchTab: React.FC<ExternalDatabaseSearchTabProps>
 
       // 5. Associate inserted record with project
       setImportStatusMsg('Associating imported sequence with current project...');
-      const assocSuccess = await bioService.addSequenceToProject(projectId, newSeqId);
+      const assocSuccess = await bioService.addSequenceToProject(projectId, newSeqId, userId);
 
       if (!assocSuccess) {
         throw new Error('Sequence record inserted, but project association failed.');
@@ -464,11 +464,11 @@ export const ExternalDatabaseSearchTab: React.FC<ExternalDatabaseSearchTabProps>
             />
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
             <select
               value={selectedDb}
               onChange={(e) => setSelectedDb(e.target.value as 'nucleotide' | 'protein' | 'gene')}
-              className="bg-[#F8FAFC] border border-[#CBD5E1] rounded-xl px-3 py-2.5 text-xs text-[#0F172A] focus:outline-none focus:border-[#38BDF8] font-mono cursor-pointer"
+              className="w-full sm:w-auto min-w-0 bg-[#F8FAFC] border border-[#CBD5E1] rounded-xl px-3 py-2.5 text-xs text-[#0F172A] focus:outline-none focus:border-[#38BDF8] font-mono cursor-pointer"
             >
               <option value="nucleotide">NCBI Nucleotide (DNA/RNA)</option>
               <option value="protein">NCBI Protein</option>
@@ -478,7 +478,7 @@ export const ExternalDatabaseSearchTab: React.FC<ExternalDatabaseSearchTabProps>
             <button
               type="submit"
               disabled={isSearching}
-              className="px-4 py-2.5 bg-[#0284C7] hover:bg-[#0369a1] text-white font-semibold text-xs rounded-xl transition-all disabled:opacity-50 flex items-center gap-2 shrink-0 cursor-pointer shadow-xs"
+              className="w-full sm:w-auto justify-center px-4 py-2.5 bg-[#0284C7] hover:bg-[#0369a1] text-white font-semibold text-xs rounded-xl transition-all disabled:opacity-50 flex items-center gap-2 shrink-0 cursor-pointer shadow-xs"
             >
               {isSearching ? (
                 <>
@@ -575,7 +575,7 @@ export const ExternalDatabaseSearchTab: React.FC<ExternalDatabaseSearchTabProps>
         </div>
       ) : searchResult ? (
         <div className="space-y-3">
-          <div className="flex items-center justify-between text-xs text-[#64748B] px-1">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#64748B] px-1">
             <span className="font-medium text-[#334155]">
               Search Results ({searchResult.totalCount.toLocaleString()} total matches)
             </span>
@@ -623,13 +623,13 @@ export const ExternalDatabaseSearchTab: React.FC<ExternalDatabaseSearchTabProps>
                         {item.definition || item.title}
                       </h4>
 
-                      <div className="flex items-center gap-4 text-[11px] text-[#64748B] font-mono">
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-[#64748B] font-mono">
                         <span>Organism: <strong className="text-[#334155]">{item.organism || 'Homo sapiens'}</strong></span>
                         <span>Length: <strong className="text-[#334155]">{(item.length || 0).toLocaleString()} {item.sourceDb === 'protein' ? 'aa' : 'bp'}</strong></span>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                    <div className="flex flex-wrap items-center justify-end gap-2 shrink-0 self-stretch sm:self-center">
                       <button
                         type="button"
                         onClick={() => handleViewDetails(item)}
@@ -685,15 +685,15 @@ export const ExternalDatabaseSearchTab: React.FC<ExternalDatabaseSearchTabProps>
 
       {/* Record Details Modal / Drawer */}
       {detailRecord && (
-        <div className="fixed inset-0 z-60 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl bg-white border border-[#E2E8F0] rounded-2xl shadow-xl overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-150">
-            <div className="p-5 border-b border-[#E2E8F0] flex items-center justify-between shrink-0 bg-[#F8FAFC]">
+        <div className="fixed inset-0 z-60 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
+          <div className="w-full max-w-2xl bg-white border border-[#E2E8F0] rounded-2xl shadow-xl overflow-hidden flex flex-col max-h-[92dvh] animate-in fade-in zoom-in-95 duration-150">
+            <div className="p-4 sm:p-5 border-b border-[#E2E8F0] flex items-center justify-between gap-2 shrink-0 bg-[#F8FAFC]">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="w-9 h-9 rounded-xl bg-sky-50 border border-sky-200 flex items-center justify-center text-[#0284C7] shrink-0">
                   <FileText className="w-4 h-4" />
                 </div>
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs font-mono font-bold text-[#0284C7]">{detailRecord.accession}</span>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white text-[#475569] border border-[#E2E8F0]">
                       {getDatabaseLabel(detailRecord.sourceDb)}
@@ -706,13 +706,13 @@ export const ExternalDatabaseSearchTab: React.FC<ExternalDatabaseSearchTabProps>
               <button
                 type="button"
                 onClick={closeDetailsModal}
-                className="p-1.5 rounded-lg text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors cursor-pointer"
+                className="p-1.5 rounded-lg text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors cursor-pointer shrink-0"
               >
                 ✕
               </button>
             </div>
 
-            <div className="p-5 overflow-y-auto custom-scrollbar flex-1 space-y-4">
+            <div className="p-4 sm:p-5 overflow-y-auto custom-scrollbar flex-1 space-y-4">
               {/* Record Summary Metadata Grid */}
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-[#F8FAFC] p-4 rounded-xl border border-[#E2E8F0] text-xs">
                 <div>
@@ -789,11 +789,11 @@ export const ExternalDatabaseSearchTab: React.FC<ExternalDatabaseSearchTabProps>
             </div>
 
             {/* Modal Actions */}
-            <div className="p-4 border-t border-[#E2E8F0] bg-[#F8FAFC] flex items-center justify-end gap-3 shrink-0">
+            <div className="p-3.5 sm:p-4 border-t border-[#E2E8F0] bg-[#F8FAFC] flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2.5 sm:gap-3 shrink-0">
               <button
                 type="button"
                 onClick={closeDetailsModal}
-                className="px-4 py-2 rounded-xl bg-[#F1F5F9] text-[#475569] hover:bg-[#E2E8F0] hover:text-[#0F172A] text-xs font-medium transition-colors cursor-pointer"
+                className="w-full sm:w-auto justify-center px-4 py-2 rounded-xl bg-[#F1F5F9] text-[#475569] hover:bg-[#E2E8F0] hover:text-[#0F172A] text-xs font-medium transition-colors cursor-pointer"
               >
                 Close
               </button>
@@ -806,7 +806,7 @@ export const ExternalDatabaseSearchTab: React.FC<ExternalDatabaseSearchTabProps>
                   }
                 }}
                 disabled={importingAccession === detailRecord.accession}
-                className="px-5 py-2 rounded-xl bg-[#0284C7] hover:bg-[#0369a1] text-white font-semibold text-xs transition-all shadow-xs flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                className="w-full sm:w-auto justify-center px-5 py-2 rounded-xl bg-[#0284C7] hover:bg-[#0369a1] text-white font-semibold text-xs transition-all shadow-xs flex items-center gap-2 cursor-pointer disabled:opacity-50"
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>Import to BioCode Studio</span>
