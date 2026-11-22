@@ -523,6 +523,7 @@ export const BioSequenceProvider: React.FC<{
    */
   const loadTarget = useCallback(
     async (params: LoadSequenceTargetParams): Promise<LoadedSequenceResult> => {
+      const requestToken = ++executionTokenRef.current;
       const cleanAcc = (params.accession || '').trim().toUpperCase();
       setIsLoadingTarget(true);
       setLoadingAccession(cleanAcc);
@@ -532,6 +533,15 @@ export const BioSequenceProvider: React.FC<{
 
       try {
         const result = await sequenceLoader.loadTarget(params);
+
+        // Discard result if workspace was closed or another sequence was loaded while fetching
+        if (requestToken !== executionTokenRef.current) {
+          return {
+            ...result,
+            success: false,
+            error: 'Cancelled'
+          };
+        }
 
         if (!result.success || !result.sequence) {
           const errMsg = result.error || `Failed to retrieve biological sequence for ${cleanAcc}`;
@@ -630,11 +640,13 @@ export const BioSequenceProvider: React.FC<{
         return result;
       } catch (err: any) {
         const errMsg = err?.message || `Failed to retrieve sequence for ${cleanAcc}`;
-        setTargetLoadingError(errMsg);
-        setAnalysisStatus('failed');
-        setAnalysisMessage(errMsg);
-        setIsLoadingTarget(false);
-        setLoadingAccession(null);
+        if (requestToken === executionTokenRef.current) {
+          setTargetLoadingError(errMsg);
+          setAnalysisStatus('failed');
+          setAnalysisMessage(errMsg);
+          setIsLoadingTarget(false);
+          setLoadingAccession(null);
+        }
 
         return {
           success: false,
@@ -683,6 +695,7 @@ export const BioSequenceProvider: React.FC<{
         return;
       }
 
+      executionTokenRef.current += 1;
       setTargetLoadingError(null);
       setIsLoadingTarget(false);
       setLoadingAccession(null);
@@ -820,28 +833,34 @@ export const BioSequenceProvider: React.FC<{
    * Action: Clear Active Sequence (Closes active research workspace cleanly)
    */
   const clearActiveSequence = useCallback(() => {
+    // Invalidate any in-flight async sequence fetch or analysis so it cannot resurrect the closed workspace
+    executionTokenRef.current += 1;
+    setIsLoadingTarget(false);
+    setLoadingAccession(null);
+    setTargetLoadingError(null);
     setSequenceId('');
     setAccession('');
     setDefinition('');
     setOrganism('');
     setSequence('');
     setOriginalSequence('');
+    setSequenceType('UNKNOWN');
     setVersionNumber(1);
     setVersionHistory([]);
     setAnalysisResults(null);
     setHasActiveSequence(false);
     setSourceMetadata(undefined);
     setAnalysisStatus('idle');
-    setAnalysisMessage('Workspace reset');
+    setAnalysisMessage('No active sequence workspace');
     setStructureState({
       status: 'SYNCHRONIZED',
-      structureType: 'PREDICTED',
-      sourceName: 'Sequence-derived structural model',
-      confidence: 'High Confidence',
-      message: 'Workspace reset'
+      structureType: 'UNAVAILABLE',
+      sourceName: '',
+      confidence: '',
+      message: 'No active sequence loaded'
     });
     clearWhatIfSimulation();
-    persistStateLocally('', '', '', '', '', 'PROTEIN', 1, [], '');
+    persistStateLocally('', '', '', '', '', 'UNKNOWN', 1, [], '');
   }, [persistStateLocally, clearWhatIfSimulation]);
 
   /**

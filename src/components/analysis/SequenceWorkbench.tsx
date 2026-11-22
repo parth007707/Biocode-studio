@@ -204,8 +204,9 @@ export const SequenceWorkbench: React.FC<SequenceWorkbenchProps> = ({
   // Load initialSequence ONLY on initial mount if central sequence store is empty
   const initialLoadDoneRef = useRef<boolean>(false);
   useEffect(() => {
-    if (!centralSequence && initialSequence && !initialLoadDoneRef.current) {
-      initialLoadDoneRef.current = true;
+    if (initialLoadDoneRef.current) return;
+    initialLoadDoneRef.current = true;
+    if (!centralSequence && initialSequence) {
       centralLoadSequence(
         initialSequence,
         sourceMetadata,

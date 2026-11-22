@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Sidebar } from './components/layout/Sidebar';
 import { TopHeader } from './components/layout/TopHeader';
 import { DashboardView } from './components/dashboard/DashboardView';
@@ -182,6 +182,10 @@ export default function App() {
     window.history.pushState({}, '', '/sequence-analysis');
   };
 
+  const handleClearWorkbenchInitialData = useCallback(() => {
+    setWorkbenchInitialData(null);
+  }, []);
+
   const currentNavItem: NavItem = activeTab || 'dashboard';
 
   const renderContent = () => {
@@ -206,6 +210,7 @@ export default function App() {
           <AnalysisView 
             user={user} 
             initialWorkbenchData={workbenchInitialData} 
+            onClearInitialWorkbenchData={handleClearWorkbenchInitialData}
             onOpenAiWithContext={handleOpenAiWithContext}
           />
         );

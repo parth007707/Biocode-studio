@@ -16,10 +16,16 @@ interface AnalysisViewProps {
     projectId?: string;
     sequenceId?: string;
   } | null;
+  onClearInitialWorkbenchData?: () => void;
   onOpenAiWithContext?: (context: any) => void;
 }
 
-export const AnalysisView: React.FC<AnalysisViewProps> = ({ user, initialWorkbenchData, onOpenAiWithContext }) => {
+export const AnalysisView: React.FC<AnalysisViewProps> = ({
+  user,
+  initialWorkbenchData,
+  onClearInitialWorkbenchData,
+  onOpenAiWithContext
+}) => {
   const { 
     clearActiveSequence, 
     sequenceType: centralSequenceType, 
@@ -65,8 +71,11 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ user, initialWorkben
         initialWorkbenchData.pipeline
       );
       setViewMode('workbench');
-    } else if (!centralSequence && !hasActiveSequence && !initialWorkbenchData) {
-      setViewMode('explorer');
+    } else if (!initialWorkbenchData) {
+      loadedInitialDataRef.current = null;
+      if (!centralSequence && !hasActiveSequence) {
+        setViewMode('explorer');
+      }
     }
   }, [initialWorkbenchData, centralSequence, hasActiveSequence, centralLoadSequence]);
 
@@ -76,6 +85,10 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ user, initialWorkben
     pipeline?: string,
     savedResults?: any
   ) => {
+    // Clear any stale parent initialWorkbenchData from an earlier Project/History navigation
+    loadedInitialDataRef.current = null;
+    onClearInitialWorkbenchData?.();
+
     let metaObj: Partial<SequenceSourceMetadata> | undefined = undefined;
     if (identifierOrMeta) {
       if (typeof identifierOrMeta === 'string') {
@@ -85,18 +98,15 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ user, initialWorkben
       }
     }
 
-    if (pipeline) {
-      setInitialPipeline(pipeline);
-    }
-    if (savedResults) {
-      setInitialAnalysisResult(savedResults);
-    }
+    setInitialPipeline(pipeline || undefined);
+    setInitialAnalysisResult(savedResults || undefined);
 
     if (initialSeq && initialSeq.trim().length > 0) {
       centralLoadSequence(initialSeq, metaObj, savedResults, pipeline);
+      setViewMode('workbench');
     } else if (metaObj?.accession) {
       // If opened with an accession without pre-loaded sequence, load via shared loader
-      await loadTarget({
+      const res = await loadTarget({
         accession: metaObj.accession,
         source: metaObj.database === 'NCBI' ? 'NCBI' : 'AUTO',
         sequenceType: (metaObj.sequenceType as any) || 'AUTO',
@@ -104,29 +114,41 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ user, initialWorkben
         organism: metaObj.organism,
         metadata: metaObj
       });
+      if (res.success) {
+        setViewMode('workbench');
+      }
+    } else if (centralSequence || hasActiveSequence) {
+      setViewMode('workbench');
     }
-
-    setViewMode('workbench');
   };
 
   const handleBackToExplorer = () => {
     setViewMode('explorer');
   };
 
-  const handleCloseWorkspace = () => {
-    // 1. Clear active sequence and working in-memory state in context & localStorage
+  const handleCloseWorkspace = (e?: React.MouseEvent<HTMLButtonElement>) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+
+    // 1. Clear parent initialWorkbenchData so stale project/history target cannot keep the tab alive or resurrect it
+    loadedInitialDataRef.current = null;
+    onClearInitialWorkbenchData?.();
+
+    // 2. Clear active sequence and temporary in-memory state in context (preserves all saved projects, sequences, analysis history, and Supabase records)
     clearActiveSequence();
 
-    // 2. Clear local pipeline and results state
+    // 3. Clear local temporary pipeline and results state
     setInitialPipeline(undefined);
     setInitialAnalysisResult(undefined);
 
-    // 3. Clear query parameters if any (without full page reload, staying on /sequence-analysis)
-    if (typeof window !== 'undefined') {
+    // 4. Clear query parameters if any (without full page reload, staying on /sequence-analysis)
+    if (typeof window !== 'undefined' && (window.location.search || window.location.pathname !== '/sequence-analysis')) {
       window.history.replaceState({}, '', '/sequence-analysis');
     }
 
-    // 4. Navigate directly to Biological Data Explorer
+    // 5. Return directly to Biological Data Explorer
     setViewMode('explorer');
   };
 
@@ -156,7 +178,7 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ user, initialWorkben
                 <button
                   type="button"
                   onClick={() => setViewMode('workbench')}
-                  className={`px-2.5 sm:px-3 py-1.5 rounded-l-lg text-xs font-medium transition-all flex items-center gap-1.5 sm:gap-2 cursor-pointer ${
+                  className={`px-2.5 sm:px-3 py-1.5 rounded-l-lg text-xs font-medium transition-all flex items-center gap-1.5 sm:gap-2 cursor-pointer min-w-0 ${
                     viewMode === 'workbench'
                       ? 'bg-[rgba(56,189,248,0.12)] text-[#0284C7] border border-[#38BDF8]/30 border-r-0 font-semibold shadow-xs'
                       : 'text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] border border-transparent'
@@ -173,13 +195,13 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({ user, initialWorkben
                   onClick={handleCloseWorkspace}
                   title="Close Workspace / Clear Active Target"
                   aria-label="Close Workspace / Clear Active Target"
-                  className={`px-2 py-1.5 rounded-r-lg text-xs transition-all flex items-center justify-center cursor-pointer ${
+                  className={`px-2 py-1.5 rounded-r-lg text-xs transition-all flex items-center justify-center shrink-0 cursor-pointer ${
                     viewMode === 'workbench'
                       ? 'bg-[rgba(56,189,248,0.12)] text-[#64748B] hover:text-rose-600 hover:bg-rose-50 border border-[#38BDF8]/30 border-l-0'
                       : 'text-[#94A3B8] hover:text-rose-600 hover:bg-[#F1F5F9] border border-transparent'
                   }`}
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <X className="w-3.5 h-3.5 pointer-events-none" />
                 </button>
               </div>
             </>
